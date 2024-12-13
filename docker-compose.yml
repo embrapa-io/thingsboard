@@ -38,7 +38,6 @@ services:
       TB_KAFKA_SERVERS: kafka:9094
     volumes:
       - tb_data:/data
-      - log_data:/var/log/thingsboard
 
 volumes:
   kafka_data:
@@ -47,10 +46,6 @@ volumes:
 
   tb_data:
     name: ${VOLUME_THINGSBOARD}
-    external: true
-
-  log_data:
-    name: ${VOLUME_LOG}
     external: true
 
   backup:
