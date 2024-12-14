@@ -8,7 +8,9 @@ Baseado na [configuração de _deploy_ do ThingsBoard usando Docker](https://thi
 
 ```
 docker volume create thingsboard_kafka
+docker volume create thingsboard_db
 docker volume create thingsboard_data
+docker volume create --driver local --opt type=none --opt device=$(pwd)/log --opt o=bind thingsboard_log
 docker volume create --driver local --opt type=none --opt device=$(pwd)/backup --opt o=bind thingsboard_backup
 
 cp .env.example .env

@@ -22,12 +22,37 @@ services:
       KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: "0@kafka:9093" #KRaft
     volumes:
       - kafka_data:/bitnami
+    healthcheck:
+      test: "bash -c 'printf \"\" > /dev/tcp/127.0.0.1/9094; exit $$?;'"
+      interval: 5s
+      timeout: 4s
+      retries: 6
+      start_period: 5s
+
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: thingsboard
+    restart: unless-stopped
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ 'CMD-SHELL', 'pg_isready', '-d', 'thingsboard' ]
+      interval: 5s
+      timeout: 4s
+      retries: 6
+      start_period: 5s
 
   thingsboard:
     restart: unless-stopped
     image: "thingsboard/tb-postgres"
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
+      db:
+        condition: service_healthy
     ports:
       - "${PORT_WEB}:9090"
       - "${PORT_MQTT}:1883"
@@ -36,16 +61,52 @@ services:
     environment:
       TB_QUEUE_TYPE: kafka
       TB_KAFKA_SERVERS: kafka:9094
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/thingsboard
+      SPRING_DATASOURCE_USERNAME: ${DB_USER}
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
     volumes:
       - tb_data:/data
+      - log_data:/var/log/thingsboard
+
+  backup:
+    image: prodrigestivill/postgres-backup-local
+    restart: unless-stopped
+    volumes:
+      - backup:/backups
+    links:
+      - db
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - POSTGRES_HOST=db
+      - POSTGRES_DB=thingsboard
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - SCHEDULE=@daily
+      - BACKUP_KEEP_DAYS=7
+      - BACKUP_KEEP_WEEKS=4
+      - BACKUP_KEEP_MONTHS=6
+    profiles:
+      - development
+      - test
+      - production
 
 volumes:
   kafka_data:
     name: ${VOLUME_KAFKA}
     external: true
 
+  pg_data:
+    name: ${VOLUME_DB}
+    external: true
+
   tb_data:
     name: ${VOLUME_THINGSBOARD}
+    external: true
+
+  log_data:
+    name: ${VOLUME_LOG}
     external: true
 
   backup:
