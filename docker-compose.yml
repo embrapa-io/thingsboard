@@ -46,8 +46,8 @@ services:
       start_period: 5s
 
   thingsboard:
-    restart: unless-stopped
     image: "thingsboard/tb-postgres"
+    restart: unless-stopped
     depends_on:
       kafka:
         condition: service_healthy
@@ -68,6 +68,17 @@ services:
       - tb_data:/data
       - log_data:/var/log/thingsboard
 
+  pgadmin:
+    image: dpage/pgadmin4:8
+    restart: unless-stopped
+    ports:
+      - "${PORT_PGADMIN}:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_USER}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+
   backup:
     image: prodrigestivill/postgres-backup-local
     restart: unless-stopped
@@ -83,12 +94,12 @@ services:
       - POSTGRES_DB=thingsboard
       - POSTGRES_USER=${DB_USER}
       - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - BACKUP_ON_START=TRUE
       - SCHEDULE=@daily
       - BACKUP_KEEP_DAYS=7
       - BACKUP_KEEP_WEEKS=4
       - BACKUP_KEEP_MONTHS=6
     profiles:
-      - development
       - test
       - production
 
@@ -107,6 +118,10 @@ volumes:
 
   log_data:
     name: ${VOLUME_LOG}
+    external: true
+
+  pgadmin_data:
+    name: ${VOLUME_PGADMIN}
     external: true
 
   backup:
