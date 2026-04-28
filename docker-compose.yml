@@ -1,7 +1,7 @@
 services:
   kafka:
     restart: unless-stopped
-    image: bitnami/kafka:3.8.1
+    image: bitnamilegacy/kafka:4.0
     ports:
       - ${PORT_KAFKA}:9092
       - 9093
@@ -46,7 +46,7 @@ services:
       start_period: 5s
 
   thingsboard:
-    image: "thingsboard/tb-postgres"
+    image: thingsboard/tb-node:4.3.1-latest
     restart: unless-stopped
     depends_on:
       kafka:
@@ -54,11 +54,12 @@ services:
       db:
         condition: service_healthy
     ports:
-      - "${PORT_WEB}:9090"
+      - "${PORT_WEB}:8080"
       - "${PORT_MQTT}:1883"
       - "${PORT_EDGE_RPC}:7070"
       - "5683-5688:5683-5688/udp"
     environment:
+      TB_SERVICE_ID: tb-ce-node
       TB_QUEUE_TYPE: kafka
       TB_KAFKA_SERVERS: kafka:9094
       SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/thingsboard
@@ -69,7 +70,7 @@ services:
       - log_data:/var/log/thingsboard
 
   pgadmin:
-    image: dpage/pgadmin4:8
+    image: dpage/pgadmin4:9
     restart: unless-stopped
     ports:
       - "${PORT_PGADMIN}:80"
@@ -80,7 +81,7 @@ services:
       - pgadmin_data:/var/lib/pgadmin
 
   backup:
-    image: prodrigestivill/postgres-backup-local
+    image: prodrigestivill/postgres-backup-local:17
     restart: unless-stopped
     volumes:
       - backup:/backups
