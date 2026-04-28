@@ -18,6 +18,12 @@ readonly ENV_EXAMPLE="${SCRIPT_DIR}/.env.example"
 readonly LOG_DIR="${SCRIPT_DIR}/log"
 readonly BACKUP_DIR="${SCRIPT_DIR}/backup"
 
+# UID/GID dos usuários internos dos containers (definidos pelas próprias imagens).
+readonly TB_UID=799     # 'thingsboard' em thingsboard/tb-node
+readonly TB_GID=799
+readonly PG_UID=999     # 'postgres' em postgres / prodrigestivill/postgres-backup-local (debian)
+readonly PG_GID=999
+
 # Variáveis cujos valores devem ser substituídos por segredos aleatórios.
 readonly SECRET_VARS=(DB_PASSWORD PGADMIN_PASSWORD)
 
@@ -89,6 +95,25 @@ ensure_local_dir() {
   mkdir -p "${dir}"
 }
 
+# Ajusta ownership do diretório local para o UID/GID do usuário interno do container.
+# Necessário para bind-mounts onde o processo do container não roda como root.
+ensure_dir_owner() {
+  local dir="$1" uid="$2" gid="$3"
+  ensure_local_dir "${dir}"
+  local current_uid current_gid
+  current_uid="$(stat -c '%u' "${dir}" 2>/dev/null || stat -f '%u' "${dir}")"
+  current_gid="$(stat -c '%g' "${dir}" 2>/dev/null || stat -f '%g' "${dir}")"
+  if [[ "${current_uid}" == "${uid}" && "${current_gid}" == "${gid}" ]]; then
+    return 0
+  fi
+  if [[ "$(id -u)" -ne 0 ]]; then
+    warn "Ownership de ${dir} é ${current_uid}:${current_gid}, esperado ${uid}:${gid}. Re-execute com sudo para ajustar."
+    return 0
+  fi
+  log "  - ajustando ownership de ${dir} para ${uid}:${gid}"
+  chown -R "${uid}:${gid}" "${dir}"
+}
+
 # Cria um volume Docker nomeado se não existir. Idempotente.
 ensure_named_volume() {
   local name="$1"
@@ -102,8 +127,12 @@ ensure_named_volume() {
 
 # Cria um volume Docker bind-mount apontando para um diretório local. Idempotente.
 ensure_bind_volume() {
-  local name="$1" path="$2"
-  ensure_local_dir "${path}"
+  local name="$1" path="$2" uid="${3:-}" gid="${4:-}"
+  if [[ -n "${uid}" && -n "${gid}" ]]; then
+    ensure_dir_owner "${path}" "${uid}" "${gid}"
+  else
+    ensure_local_dir "${path}"
+  fi
   if docker volume inspect "${name}" >/dev/null 2>&1; then
     log "  - volume '${name}' (bind ${path}) já existe."
     return 0
@@ -147,8 +176,8 @@ ensure_volumes() {
   ensure_named_volume "${v_db}"
   ensure_named_volume "${v_tb}"
   ensure_named_volume "${v_pgadmin}"
-  ensure_bind_volume "${v_log}" "${LOG_DIR}"
-  ensure_bind_volume "${v_backup}" "${BACKUP_DIR}"
+  ensure_bind_volume "${v_log}" "${LOG_DIR}" "${TB_UID}" "${TB_GID}"
+  ensure_bind_volume "${v_backup}" "${BACKUP_DIR}" "${PG_UID}" "${PG_GID}"
 }
 
 main() {
