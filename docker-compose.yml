@@ -22,6 +22,8 @@ services:
       KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: "0@kafka:9093" #KRaft
     volumes:
       - kafka_data:/bitnami
+    networks:
+      - io
     healthcheck:
       test: "bash -c 'printf \"\" > /dev/tcp/127.0.0.1/9094; exit $$?;'"
       interval: 5s
@@ -38,6 +40,8 @@ services:
     restart: unless-stopped
     volumes:
       - pg_data:/var/lib/postgresql/data
+    networks:
+      - io
     healthcheck:
       test: [ 'CMD-SHELL', 'pg_isready', '-d', 'thingsboard' ]
       interval: 5s
@@ -68,6 +72,8 @@ services:
     volumes:
       - tb_data:/data
       - log_data:/var/log/thingsboard
+    networks:
+      - io
 
   pgadmin:
     image: dpage/pgadmin4:9
@@ -79,12 +85,16 @@ services:
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
     volumes:
       - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - io
 
   backup:
     image: prodrigestivill/postgres-backup-local:17
     restart: unless-stopped
     volumes:
       - backup:/backups
+    networks:
+      - io
     links:
       - db
     depends_on:
