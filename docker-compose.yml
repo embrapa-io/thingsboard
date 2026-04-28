@@ -104,6 +104,14 @@ services:
       - test
       - production
 
+# Execute:
+# docker network create --driver=bridge --subnet=172.30.65.0/24 --gateway=172.30.65.1 io_thingsboard
+
+networks:
+  io:
+    name: io_thingsboard
+    external: true
+
 volumes:
   kafka_data:
     name: ${VOLUME_KAFKA}
