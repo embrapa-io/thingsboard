@@ -1,7 +1,9 @@
 services:
   kafka:
     restart: unless-stopped
-    image: bitnamilegacy/kafka:4.0
+    # Kafka 4.0.0 is affected by KAFKA-19888, which can break the group
+    # coordinator and make ThingsBoard telemetry requests time out.
+    image: bitnamilegacy/kafka:3.9.0
     ports:
       - ${PORT_KAFKA}:9092
       - 9093
