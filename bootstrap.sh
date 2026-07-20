@@ -17,6 +17,7 @@ readonly ENV_FILE="${SCRIPT_DIR}/.env"
 readonly ENV_EXAMPLE="${SCRIPT_DIR}/.env.example"
 readonly LOG_DIR="${SCRIPT_DIR}/log"
 readonly BACKUP_DIR="${SCRIPT_DIR}/backup"
+readonly CERT_DIR="${SCRIPT_DIR}/certs"
 
 # UID/GID dos usuários internos dos containers (definidos pelas próprias imagens).
 readonly TB_UID=799     # 'thingsboard' em thingsboard/tb-node
@@ -66,9 +67,21 @@ set_env_var() {
   mv "${tmp}" "${file}"
 }
 
+ensure_env_default() {
+  local var="$1" value="$2"
+  local current
+  current="$(awk -F= -v var="${var}" '$1 == var { sub(/^[^=]*=/, ""); print; exit }' "${ENV_FILE}")"
+  if [[ -n "${current}" ]]; then
+    return 0
+  fi
+  set_env_var "${var}" "${value}" "${ENV_FILE}"
+  log "  - ${var} adicionado ao .env existente."
+}
+
 ensure_env_file() {
   if [[ -f "${ENV_FILE}" ]]; then
     log ".env já existe — preservando valores atuais."
+    ensure_env_default PORT_MQTTS 8883
     return 0
   fi
 
@@ -84,6 +97,29 @@ ensure_env_file() {
     set_env_var "${var}" "${secret}" "${ENV_FILE}"
     log "  - ${var} definido (${SECRET_LENGTH} chars aleatórios)."
   done
+}
+
+ensure_mqtt_certificates() {
+  local required=(ca.pem server.pem server_key.pem)
+  for filename in "${required[@]}"; do
+    [[ -s "${CERT_DIR}/${filename}" ]] ||
+      fail "Certificado ausente: ${CERT_DIR}/${filename}. Execute o gerador MQTTS antes do bootstrap."
+  done
+
+  chmod 644 "${CERT_DIR}/ca.pem" "${CERT_DIR}/server.pem"
+
+  if [[ "$(id -u)" -eq 0 ]]; then
+    chown "${TB_UID}:${TB_GID}" "${CERT_DIR}/server.pem" "${CERT_DIR}/server_key.pem"
+    chmod 600 "${CERT_DIR}/server_key.pem"
+    log "Permissões dos certificados MQTTS ajustadas para o ThingsBoard."
+    return 0
+  fi
+
+  local key_uid
+  key_uid="$(stat -c '%u' "${CERT_DIR}/server_key.pem" 2>/dev/null || stat -f '%u' "${CERT_DIR}/server_key.pem")"
+  if [[ "${key_uid}" != "${TB_UID}" ]]; then
+    warn "A chave MQTTS pertence ao UID ${key_uid}; o ThingsBoard usa ${TB_UID}. Reexecute o bootstrap com sudo se o container não conseguir lê-la."
+  fi
 }
 
 ensure_local_dir() {
@@ -216,6 +252,7 @@ main() {
   require tr
 
   ensure_env_file
+  ensure_mqtt_certificates
   ensure_volumes
   ensure_tb_installed
 

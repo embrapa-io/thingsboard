@@ -61,7 +61,7 @@ services:
         condition: service_healthy
     ports:
       - "${PORT_WEB}:8080"
-      - "${PORT_MQTT}:1883"
+      - "${PORT_MQTTS:-8883}:8883"
       - "${PORT_EDGE_RPC}:7070"
       - "5683-5688:5683-5688/udp"
     environment:
@@ -71,9 +71,20 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/thingsboard
       SPRING_DATASOURCE_USERNAME: ${DB_USER}
       SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
+      MQTT_BIND_ADDRESS: "127.0.0.1"
+      MQTT_SSL_ENABLED: "true"
+      MQTT_SSL_BIND_ADDRESS: "0.0.0.0"
+      MQTT_SSL_BIND_PORT: "8883"
+      MQTT_SSL_PROTOCOL: "TLSv1.2"
+      MQTT_SSL_CREDENTIALS_TYPE: "PEM"
+      MQTT_SSL_PEM_CERT: /etc/thingsboard/certs/server.pem
+      MQTT_SSL_PEM_KEY: /etc/thingsboard/certs/server_key.pem
+      TB_TRANSPORT_SSL_CERTIFICATE_RELOAD_ENABLED: "true"
     volumes:
       - tb_data:/data
       - log_data:/var/log/thingsboard
+      - ./certs/server.pem:/etc/thingsboard/certs/server.pem:ro
+      - ./certs/server_key.pem:/etc/thingsboard/certs/server_key.pem:ro
     networks:
       - io
 
