@@ -59,8 +59,10 @@ services:
         condition: service_healthy
       db:
         condition: service_healthy
+    expose:
+      - "8080"
     ports:
-      - "${PORT_WEB}:8080"
+      - "${PORT_MQTT:-1883}:1883"
       - "${PORT_MQTTS:-8883}:8883"
       - "${PORT_EDGE_RPC}:7070"
       - "5683-5688:5683-5688/udp"
@@ -71,7 +73,12 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/thingsboard
       SPRING_DATASOURCE_USERNAME: ${DB_USER}
       SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
-      MQTT_BIND_ADDRESS: "127.0.0.1"
+      # O transporte MQTT precisa permanecer habilitado para que MQTTS funcione.
+      # O listener simples fica preso ao loopback até MQTT_BIND_ADDRESS ser
+      # explicitamente alterado para um endereço externo.
+      MQTT_ENABLED: "${MQTT_ENABLED:-true}"
+      MQTT_BIND_ADDRESS: "${MQTT_BIND_ADDRESS:-127.0.0.1}"
+      MQTT_BIND_PORT: "1883"
       MQTT_SSL_ENABLED: "true"
       MQTT_SSL_BIND_ADDRESS: "0.0.0.0"
       MQTT_SSL_BIND_PORT: "8883"
@@ -87,6 +94,52 @@ services:
       - ./certs/server_key.pem:/etc/thingsboard/certs/server_key.pem:ro
     networks:
       - io
+
+  auth-gateway:
+    build:
+      context: ./auth-gateway
+    restart: unless-stopped
+    depends_on:
+      thingsboard:
+        condition: service_started
+    environment:
+      PORT: "3000"
+      TB_URL: "${TB_AUTH_GATEWAY_URL:-http://thingsboard:8080}"
+      TB_GATEWAY_TOKEN: "${TB_AUTH_GATEWAY_TOKEN:-}"
+      TB_REQUEST_TIMEOUT_MS: "${TB_AUTH_GATEWAY_TIMEOUT_MS:-3000}"
+      AUTH_GATEWAY_MAX_BODY_BYTES: "${TB_AUTH_GATEWAY_MAX_BODY_BYTES:-32768}"
+    expose:
+      - "3000"
+    networks:
+      - io
+    healthcheck:
+      test: [ "CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))" ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      thingsboard:
+        condition: service_started
+      auth-gateway:
+        condition: service_healthy
+    ports:
+      - "${PORT_WEB}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+    networks:
+      - io
+    healthcheck:
+      test: [ "CMD", "wget", "-qO-", "http://127.0.0.1/health" ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
 
   pgadmin:
     image: dpage/pgadmin4:9

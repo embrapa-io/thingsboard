@@ -36,6 +36,38 @@ O `bootstrap.sh` é **idempotente**:
 - Gera `.env` (a partir de `.env.example`) com senhas aleatórias `[0-9a-zA-Z]` para `DB_PASSWORD` e `PGADMIN_PASSWORD`. Se o `.env` já existir, preserva os valores atuais.
 - Cria os volumes Docker externos (`thingsboard_kafka`, `thingsboard_db`, `thingsboard_data`, `thingsboard_pgadmin`) e os _bind-mounts_ locais (`./log` → `thingsboard_log`, `./backup` → `thingsboard_backup`).
 
+## Entrada web e prova de conceito de autorização
+
+O serviço `nginx` é a única porta web publicada pela Central (`PORT_WEB`). O
+ThingsBoard fica acessível apenas na rede Docker interna e o `auth-gateway` também
+não publica porta no host. MQTT, MQTTS e Edge RPC continuam nas portas próprias e
+não passam pela política web.
+
+O gateway encaminha login e renovação ao ThingsBoard e só devolve tokens quando o
+usuário possui o atributo de servidor `manager` com valor booleano real `true`.
+Usuários sem o atributo, com `false` ou com valor textual recebem `403`; falhas da
+dependência negam por `503`. O gateway não registra credenciais nem tokens.
+
+Antes de subir a entrada web, crie no ThingsBoard uma credencial exclusiva e
+revogável para o gateway, com permissão suficiente para consultar atributos de
+usuários, e defina somente no `.env` (nunca no navegador):
+
+```dotenv
+TB_AUTH_GATEWAY_TOKEN=<token-interno-do-auth-gateway>
+```
+
+O valor não deve ser reutilizado pelo backend ou por um usuário humano. Sem essa
+variável o gateway permanece em falha fechada e os logins retornam `503`.
+
+Valide a configuração e os testes do gateway antes de recriar a stack:
+
+```sh
+cd auth-gateway
+npm test
+cd ..
+docker compose config -q
+```
+
 ## Certificados MQTTS para desenvolvimento
 
 Antes de habilitar o listener MQTTS, gere uma autoridade certificadora e um certificado local para o servidor.
@@ -60,9 +92,22 @@ Se já existirem certificados, os scripts interrompem a execução. Para substit
 
 Os arquivos são gravados em certs e ignorados pelo Git. O arquivo ca.pem é público e deve ser instalado nos clientes de desenvolvimento. As chaves ca_key.pem e server_key.pem são secretas.
 
-O compose monta somente server.pem e server_key.pem no container, habilita MQTTS na porta 8883 e não publica a porta MQTT sem TLS 1883 no host.
+O compose monta somente `server.pem` e `server_key.pem` no container e mantém
+MQTTS habilitado na porta `8883`. O transporte MQTT precisa permanecer ativo
+para isso; a porta `1883` fica presa ao loopback interno por padrão e não é
+anunciada pelo backend.
 
-O listener simples permanece vinculado ao loopback interno do container. Clientes externos devem utilizar exclusivamente MQTTS.
+Para habilitar MQTT simples conscientemente em um ambiente local, defina no
+`.env` da Central e no `.env` do backend:
+
+```dotenv
+MQTT_BIND_ADDRESS=0.0.0.0
+THINGSBOARD_DEVICE_MQTT_ENABLED=true
+```
+
+Depois recrie apenas o serviço da Central com `docker compose up -d
+--force-recreate thingsboard`. Em produção, mantenha o bind em loopback e
+`THINGSBOARD_DEVICE_MQTT_ENABLED=false`, anunciando somente MQTTS aos devices.
 
 Nunca use a CA de desenvolvimento em produção. O ambiente definitivo deve utilizar certificado emitido para o domínio real e proteger a chave privada por meio do mecanismo de segredos da infraestrutura.
 
