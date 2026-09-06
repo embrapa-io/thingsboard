@@ -65,8 +65,17 @@ Valide a configuração e os testes do gateway antes de recriar a stack:
 cd auth-gateway
 npm test
 cd ..
+node --test nginx/test/embrapa-access-denied.test.js
 docker compose config -q
 ```
+
+Quando o gateway nega o login com `403`, o Nginx injeta uma customização pequena
+no frontend oficial do ThingsBoard. O diálogo resultante mostra o título
+`Acesso negado`, explica que o usuário não possui acesso e oferece somente o
+botão `Ok`. Esse botão fecha o aviso sem executar logout ou uma nova tentativa
+de login. A customização está em
+`nginx/static/embrapa-access-denied.js` e só atua no diálogo padrão de acesso
+proibido; os demais diálogos não são modificados.
 
 ## Certificados MQTTS para desenvolvimento
 
