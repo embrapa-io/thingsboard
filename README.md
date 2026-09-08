@@ -82,8 +82,10 @@ EOF
 sudo install -d /etc/nginx/stream.d
 sudo install -m 0644 nginx/mqtt-stream.conf /etc/nginx/stream.d/mqtt.conf
 
-# 3. Firewall
-sudo ufw allow 1883,8883/tcp
+# 3. Firewall: o host iot.embrapa.io NÃO tem ufw; quem filtra é o firewall de
+#    perímetro da Embrapa (SITI). A 8883/TCP precisa ser liberada lá, preservando
+#    o IP de origem (chamado aberto em set/2026). Em hosts com ufw:
+#    sudo ufw allow 1883,8883/tcp
 
 # 4. Recriar o ThingsBoard com o MQTT em 127.0.0.1:${PORT_MQTT} (1884), PROXY protocol,
 #    bloqueio por IP e logging journald. Antes: (a) PORT_MQTT=1884 no .env;
@@ -112,7 +114,7 @@ sudo fail2ban-client status thingsboard-mqtt
 
 ### Validação
 
-A partir de qualquer máquina na internet:
+A partir de qualquer máquina na internet — **fora da VPN da Embrapa**. Pela VPN o tráfego entra por dentro do perímetro e chega ao host com o IP do concentrador (`172.20.0.165`), o que mascara tanto o filtro do perímetro quanto os limites por IP.
 
 ```sh
 # Handshake TLS na 8883 deve apresentar o cert Let's Encrypt de iot.embrapa.io
