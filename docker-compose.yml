@@ -57,11 +57,18 @@ services:
         condition: service_healthy
       db:
         condition: service_healthy
+    # Portas publicadas no host:
+    #   8080  HTTP UI/REST — atrás do nginx do host (443, Let's Encrypt)
+    #   1883  MQTT plain   — Docker port binding direto (devices legados)
+    #   7070  gRPC         — sincronização dos ThingsBoard Edge das Unidades
+    # MQTTS (8883) NÃO é publicado aqui: o nginx do host termina TLS e faz
+    # proxy_pass para 127.0.0.1:1883 (ver README e nginx/mqtts-stream.conf).
+    # CoAP (5683-5688/udp) foi removido em set/2026: sem uso na plataforma e
+    # apontado como exposição desnecessária (chamado CTIR #143916).
     ports:
       - "${PORT_WEB}:8080"
       - "${PORT_MQTT}:1883"
       - "${PORT_EDGE_RPC}:7070"
-      - "5683-5688:5683-5688/udp"
     environment:
       TB_SERVICE_ID: tb-ce-node
       TB_QUEUE_TYPE: kafka
