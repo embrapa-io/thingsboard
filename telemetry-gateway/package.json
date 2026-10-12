@@ -1,0 +1,14 @@
+{
+  "name": "thingsboard-telemetry-gateway",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Validates per-project and per-device JWTs and pins read-only ThingsBoard telemetry queries for Grafana and applications.",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

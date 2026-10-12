@@ -119,6 +119,27 @@ services:
       retries: 10
       start_period: 5s
 
+  telemetry-gateway:
+    build:
+      context: ./telemetry-gateway
+    restart: unless-stopped
+    environment:
+      PORT: "3000"
+      TELEMETRY_JWT_SECRET: "${TELEMETRY_JWT_SECRET:-}"
+      TB_TELEMETRY_TOKEN: "${TB_TELEMETRY_TOKEN:-}"
+      TELEMETRY_MAX_RANGE_DAYS: "${TELEMETRY_MAX_RANGE_DAYS:-31}"
+      TELEMETRY_MAX_POINTS: "${TELEMETRY_MAX_POINTS:-500}"
+    expose:
+      - "3000"
+    networks:
+      - io
+    healthcheck:
+      test: [ "CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))" ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
   nginx:
     image: nginx:1.27-alpine
     restart: unless-stopped
@@ -127,6 +148,8 @@ services:
         condition: service_started
       auth-gateway:
         condition: service_healthy
+      telemetry-gateway:
+        condition: service_healthy
     ports:
       - "${PORT_WEB}:80"
     volumes:
@@ -134,13 +157,56 @@ services:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
       - ./nginx/static:/usr/share/nginx/html/embrapa:ro
     networks:
-      - io
+      io:
+        # Nome inequívoco na rede compartilhada, usado pelo data source do
+        # Grafana para chegar à camada de telemetria.
+        aliases:
+          - tb-web
     healthcheck:
       test: [ "CMD", "wget", "-qO-", "http://127.0.0.1/health" ]
       interval: 5s
       timeout: 3s
       retries: 10
       start_period: 5s
+
+  grafana:
+    image: grafana/grafana:${GRAFANA_VERSION}
+    restart: unless-stopped
+    depends_on:
+      nginx:
+        condition: service_healthy
+    environment:
+      GF_SERVER_ROOT_URL: "${GRAFANA_ROOT_URL}"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD}"
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+      GF_USERS_AUTO_ASSIGN_ORG_ROLE: "None"
+      # Login provisório pelo Embrapa I/O (auth proxy) até a fase do OAuth
+      # GitLab. O header só é aceito de quem está na rede dedicada ao proxy.
+      GF_AUTH_PROXY_ENABLED: "true"
+      GF_AUTH_PROXY_HEADER_NAME: "X-WEBAUTH-USER"
+      GF_AUTH_PROXY_HEADER_PROPERTY: "username"
+      GF_AUTH_PROXY_AUTO_SIGN_UP: "true"
+      GF_AUTH_PROXY_WHITELIST: "${GRAFANA_AUTH_PROXY_WHITELIST}"
+      GF_PLUGINS_PREINSTALL_SYNC: "yesoreyeram-infinity-datasource@${GRAFANA_INFINITY_VERSION}"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      io:
+        aliases:
+          - grafana-iot
+      grafana_proxy:
+        aliases:
+          - grafana-iot
+    healthcheck:
+      test: [ "CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health || exit 1" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
   pgadmin:
     image: dpage/pgadmin4:9
@@ -188,6 +254,13 @@ networks:
     name: io_thingsboard
     external: true
 
+  # Rede exclusiva entre o NGINX do dashboard do Embrapa I/O e o Grafana. O
+  # whitelist do auth proxy aponta para a sub-rede dela.
+  # docker network create --driver=bridge --subnet=172.30.67.0/24 --gateway=172.30.67.1 io_grafana
+  grafana_proxy:
+    name: ${GRAFANA_PROXY_NETWORK}
+    external: true
+
 volumes:
   kafka_data:
     name: ${VOLUME_KAFKA}
@@ -211,4 +284,8 @@ volumes:
 
   backup:
     name: ${VOLUME_BACKUP}
+    external: true
+
+  grafana_data:
+    name: ${VOLUME_GRAFANA}
     external: true

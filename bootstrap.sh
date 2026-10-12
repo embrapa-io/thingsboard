@@ -26,7 +26,7 @@ readonly PG_UID=999     # 'postgres' em postgres / prodrigestivill/postgres-back
 readonly PG_GID=999
 
 # Variáveis cujos valores devem ser substituídos por segredos aleatórios.
-readonly SECRET_VARS=(DB_PASSWORD PGADMIN_PASSWORD)
+readonly SECRET_VARS=(DB_PASSWORD PGADMIN_PASSWORD TELEMETRY_JWT_SECRET GRAFANA_ADMIN_PASSWORD)
 
 # Comprimento dos segredos gerados (32 caracteres alfanuméricos).
 readonly SECRET_LENGTH=32
@@ -82,6 +82,11 @@ ensure_env_file() {
   if [[ -f "${ENV_FILE}" ]]; then
     log ".env já existe — preservando valores atuais."
     ensure_env_default PORT_MQTTS 8883
+    ensure_env_default TELEMETRY_JWT_SECRET "$(random_secret)"
+    ensure_env_default GRAFANA_ADMIN_PASSWORD "$(random_secret)"
+    for var in TELEMETRY_MAX_RANGE_DAYS TELEMETRY_MAX_POINTS GRAFANA_VERSION GRAFANA_INFINITY_VERSION       GRAFANA_ROOT_URL GRAFANA_ADMIN_USER GRAFANA_AUTH_PROXY_WHITELIST GRAFANA_PROXY_NETWORK VOLUME_GRAFANA; do
+      ensure_env_default "${var}" "$(awk -F= -v var="${var}" '$1 == var { sub(/^[^=]*=/, ""); print; exit }' "${ENV_EXAMPLE}")"
+    done
     return 0
   fi
 
@@ -189,13 +194,14 @@ read_env_var() {
 }
 
 ensure_volumes() {
-  local v_kafka v_db v_tb v_log v_backup v_pgadmin
+  local v_kafka v_db v_tb v_log v_backup v_pgadmin v_grafana
   v_kafka="$(read_env_var VOLUME_KAFKA)"
   v_db="$(read_env_var VOLUME_DB)"
   v_tb="$(read_env_var VOLUME_THINGSBOARD)"
   v_log="$(read_env_var VOLUME_LOG)"
   v_backup="$(read_env_var VOLUME_BACKUP)"
   v_pgadmin="$(read_env_var VOLUME_PGADMIN)"
+  v_grafana="$(read_env_var VOLUME_GRAFANA)"
 
   for pair in \
     "VOLUME_KAFKA:${v_kafka}" \
@@ -203,7 +209,7 @@ ensure_volumes() {
     "VOLUME_THINGSBOARD:${v_tb}" \
     "VOLUME_LOG:${v_log}" \
     "VOLUME_BACKUP:${v_backup}" \
-    "VOLUME_PGADMIN:${v_pgadmin}"; do
+    "VOLUME_PGADMIN:${v_pgadmin}"     "VOLUME_GRAFANA:${v_grafana}"; do
     [[ -n "${pair#*:}" ]] || fail "Variável '${pair%%:*}' está vazia no .env"
   done
 
@@ -212,8 +218,24 @@ ensure_volumes() {
   ensure_named_volume "${v_db}"
   ensure_named_volume "${v_tb}"
   ensure_named_volume "${v_pgadmin}"
+  ensure_named_volume "${v_grafana}"
   ensure_bind_volume "${v_log}" "${LOG_DIR}" "${TB_UID}" "${TB_GID}"
   ensure_bind_volume "${v_backup}" "${BACKUP_DIR}" "${PG_UID}" "${PG_GID}"
+}
+
+# Cria a rede exclusiva entre o NGINX do dashboard e o Grafana. A sub-rede é
+# fixa porque o whitelist do auth proxy do Grafana aponta para ela.
+ensure_grafana_network() {
+  local name whitelist
+  name="$(read_env_var GRAFANA_PROXY_NETWORK)"
+  whitelist="$(read_env_var GRAFANA_AUTH_PROXY_WHITELIST)"
+  [[ -n "${name}" && -n "${whitelist}" ]] || fail "GRAFANA_PROXY_NETWORK e GRAFANA_AUTH_PROXY_WHITELIST são obrigatórias no .env"
+  if docker network inspect "${name}" >/dev/null 2>&1; then
+    log "  - rede '${name}' já existe."
+    return 0
+  fi
+  log "  - criando rede '${name}' (${whitelist})."
+  docker network create --driver=bridge --subnet="${whitelist}" "${name}" >/dev/null
 }
 
 # Detecta se o schema do ThingsBoard já foi instalado no PostgreSQL (tabela 'queue').
@@ -254,6 +276,7 @@ main() {
   ensure_env_file
   ensure_mqtt_certificates
   ensure_volumes
+  ensure_grafana_network
   ensure_tb_installed
 
   log "Pronto. Suba a stack com: docker compose up -d --wait"

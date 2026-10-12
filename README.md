@@ -15,6 +15,7 @@ Imagens fixadas na **macro-versão** de cada componente, recebendo apenas _patch
 | Apache Kafka | `bitnamilegacy/kafka` | `4.0` |
 | pgAdmin 4 | `dpage/pgadmin4` | `9` |
 | Backup do Postgres | `prodrigestivill/postgres-backup-local` | `17` |
+| Grafana IoT | `grafana/grafana` (+ plugin Infinity) | `12.4.11` (Infinity `4.1.1`) |
 
 ## Deploy
 
@@ -76,6 +77,50 @@ botão `Ok`. Esse botão fecha o aviso sem executar logout ou uma nova tentativa
 de login. A customização está em
 `nginx/static/embrapa-access-denied.js` e só atua no diálogo padrão de acesso
 proibido; os demais diálogos não são modificados.
+
+## Camada de telemetria e Grafana IoT
+
+A telemetria é lida por `/telemetry/`, sempre via API do ThingsBoard e sem
+passar pelo Embrapa I/O. O `telemetry-gateway` valida um JWT assinado com
+`TELEMETRY_JWT_SECRET` e o NGINX repassa ao ThingsBoard somente a consulta
+normalizada por ele, com a credencial de serviço `TB_TELEMETRY_TOKEN`, que
+nunca sai da stack.
+
+Há dois escopos de token:
+
+- **projeto**: gerado pelo autômato `iot` do Embrapa I/O e gravado no
+  data source Infinity da organização do projeto no Grafana. Lista os
+  dispositivos vinculados; o caminho leva o ID: `/telemetry/DEVICE/{id}/...`.
+- **dispositivo**: gerado pelo backend na aba Consumo do diálogo "Dados de
+  acesso". O ID vem do próprio token: `/telemetry/values/timeseries`.
+
+Somente leitura de telemetria é aceita (`values/timeseries` e
+`keys/timeseries`, apenas GET). Períodos maiores que `TELEMETRY_MAX_RANGE_DAYS`
+são recortados para os dias mais recentes e cada consulta devolve no máximo
+`TELEMETRY_MAX_POINTS` pontos. Exemplo:
+
+```sh
+curl -H "Authorization: Bearer $TOKEN"   "http://localhost:9090/telemetry/values/timeseries?keys=temperature&startTs=1788235200000&endTs=1790827200000&agg=AVG&interval=86400000"
+```
+
+`TB_TELEMETRY_TOKEN` é uma API key de um usuário de serviço exclusivo
+(`telemetry-gateway@iot.embrapa.br`, tenant admin ativado, sem o atributo
+`manager`). O ThingsBoard só aceita API keys de usuários ativados.
+
+O Grafana IoT roda nesta stack (`grafana`), com o plugin Infinity
+pré-instalado. Cada projeto do Embrapa I/O tem uma organização própria: no
+Grafana OSS qualquer membro consulta qualquer data source da organização, então
+pastas e equipes não isolam dados. Até a fase do OAuth GitLab, o login é feito
+pelo Embrapa I/O via auth proxy; o header de usuário só é aceito da rede
+`GRAFANA_PROXY_NETWORK` (sub-rede em `GRAFANA_AUTH_PROXY_WHITELIST`), que liga
+apenas o NGINX do dashboard ao Grafana. O `bootstrap.sh` cria essa rede.
+
+Testes da camada:
+
+```sh
+cd telemetry-gateway
+npm test
+```
 
 ## Certificados MQTTS para desenvolvimento
 
