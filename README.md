@@ -6,7 +6,7 @@ Baseado na [configuração de _deploy_ do ThingsBoard usando Docker](https://thi
 
 ## Pilha tecnológica
 
-Imagens fixadas na **macro-versão** de cada componente, recebendo apenas _patches_ de segurança/_bugfix_ (sem _breaking changes_):
+Imagens fixadas na **macro-versão** de cada componente, recebendo apenas _patches_ de segurança/_bugfix_ (sem _breaking changes_). Ver a nota sobre o ThingsBoard abaixo da tabela:
 
 | Componente | Imagem | Versão |
 |---|---|---|
@@ -15,6 +15,8 @@ Imagens fixadas na **macro-versão** de cada componente, recebendo apenas _patch
 | Apache Kafka | `bitnamilegacy/kafka` | `4.0` |
 | pgAdmin 4 | `dpage/pgadmin4` | `9` |
 | Backup do Postgres | `prodrigestivill/postgres-backup-local` | `17` |
+
+> **Não atualizar para a 4.4 ou superior.** A partir da 4.4 (29/09/2026) o ThingsBoard passou para a _Business Source License_ 1.1: uso gratuito limitado a 100 dispositivos (ou 1.000 sem fins comerciais), marca obrigatória e chave de licença com checagem _online_. A linha 4.3 continua Apache 2.0 de forma irrevogável e recebe _patches_ de segurança até 20/07/2027. Por isso a imagem usa a tag flutuante da linha 4.3.1 (`-latest`), que recebe os _patches_ de segurança 4.3.1.x mas nunca salta para a 4.4. **Nunca** troque a tag para `latest` puro ou para 4.4+. O instalador da 4.4 converte o banco CE para a edição licenciada, o que torna um _upgrade_ acidental irreversível.
 
 ## Deploy
 
@@ -150,7 +152,7 @@ sudo fail2ban-client set thingsboard-mqtt unbanip <IP>   # para desfazer o teste
 
 ## Update
 
-Para subir a versão do ThingsBoard, ajuste a tag em `docker-compose.yml` (linha do serviço `thingsboard`) e execute o procedimento oficial de _upgrade_:
+Para subir a versão do ThingsBoard (apenas _patches_ 4.3.1.x; **nunca** para a 4.4 ou superior), ajuste a tag em `docker-compose.yml` (linha do serviço `thingsboard`) e execute o procedimento oficial de _upgrade_:
 
 ```sh
 docker compose stop && docker compose pull && docker compose up -d db
