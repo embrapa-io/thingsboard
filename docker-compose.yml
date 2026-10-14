@@ -52,7 +52,7 @@ services:
       start_period: 5s
 
   thingsboard:
-    image: thingsboard/tb-node:4.3.1-latest
+    image: thingsboard/tb-node:4.3.1.1
     restart: unless-stopped
     depends_on:
       kafka:

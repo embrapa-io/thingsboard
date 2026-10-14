@@ -6,11 +6,11 @@ Baseado na [configuração de _deploy_ do ThingsBoard usando Docker](https://thi
 
 ## Pilha tecnológica
 
-Imagens fixadas na **macro-versão** de cada componente, recebendo apenas _patches_ de segurança/_bugfix_ (sem _breaking changes_):
+Imagens fixadas na **macro-versão** de cada componente, recebendo apenas _patches_ de segurança/_bugfix_ (sem _breaking changes_). O ThingsBoard é a exceção: fica fixado no _patch_ exato, porque o projeto permanece na linha 4.3 (a 4.4 mudou para licença BUSL) e qualquer atualização deve ser deliberada:
 
 | Componente | Imagem | Versão |
 |---|---|---|
-| ThingsBoard CE | `thingsboard/tb-node` | `4.3.1-latest` |
+| ThingsBoard CE | `thingsboard/tb-node` | `4.3.1.1` |
 | PostgreSQL | `postgres` | `17` |
 | Apache Kafka | `bitnamilegacy/kafka` | `4.0` |
 | pgAdmin 4 | `dpage/pgadmin4` | `9` |
@@ -185,9 +185,9 @@ docker run -it --rm \
   -e SPRING_DATASOURCE_URL=jdbc:postgresql://db:5432/thingsboard \
   -e SPRING_DATASOURCE_USERNAME="$(grep ^DB_USER= .env | cut -d= -f2)" \
   -e SPRING_DATASOURCE_PASSWORD="$(grep ^DB_PASSWORD= .env | cut -d= -f2)" \
-  thingsboard/tb-node:4.3.1-latest upgrade-tb.sh
+  thingsboard/tb-node:<nova-versao> upgrade-tb.sh
 docker compose rm thingsboard
 docker compose up -d --force-recreate --wait
 ```
 
-Substitua `'4.3.1.1'` pela versão **atual** instalada (que será sobrescrita pela nova).
+Substitua `'4.3.1.1'` pela versão **atual** instalada (que será sobrescrita pela nova) e `<nova-versao>` pela mesma _tag_ colocada no `docker-compose.yml` (ex.: `4.3.1.6`). Não use versões 4.4 ou superiores.
