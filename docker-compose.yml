@@ -5,7 +5,7 @@ services:
     # coordinator and make ThingsBoard telemetry requests time out.
     image: bitnamilegacy/kafka:3.9.0
     ports:
-      - ${PORT_KAFKA}:9092
+      - "127.0.0.1:${PORT_KAFKA}:9092"
       - 9093
       - 9094
     environment:
@@ -59,13 +59,21 @@ services:
         condition: service_healthy
       db:
         condition: service_healthy
+    # Portas publicadas no host:
+    #   127.0.0.1:${PORT_MQTT} MQTT         — só loopback; o nginx do host fronteia 1883 (plain) e
+    #                                         8883 (TLS) e encaminha para cá com PROXY protocol
+    #   0.0.0.0:${PORT_EDGE_RPC} gRPC       — sincronização dos ThingsBoard Edge das Unidades
+    # A UI/REST (8080) não é publicada: só o serviço nginx desta stack chega a ela,
+    # passando pelo auth-gateway e pelo telemetry-gateway. O nginx do host encaminha
+    # o 443 para 127.0.0.1:${PORT_WEB}, que é o nginx desta stack.
+    # Ver README ("Portas e transportes") e nginx/mqtt-stream.conf.
+    # CoAP (5683-5688/udp) foi removido em set/2026: sem uso na plataforma e
+    # apontado como exposição desnecessária (chamado CTIR #143916).
     expose:
       - "8080"
     ports:
-      - "${PORT_MQTT:-1883}:1883"
-      - "${PORT_MQTTS:-8883}:8883"
+      - "127.0.0.1:${PORT_MQTT}:1883"
       - "${PORT_EDGE_RPC}:7070"
-      - "5683-5688:5683-5688/udp"
     environment:
       TB_SERVICE_ID: tb-ce-node
       TB_QUEUE_TYPE: kafka
@@ -73,27 +81,39 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/thingsboard
       SPRING_DATASOURCE_USERNAME: ${DB_USER}
       SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
-      # O transporte MQTT precisa permanecer habilitado para que MQTTS funcione.
-      # O listener simples fica preso ao loopback até MQTT_BIND_ADDRESS ser
-      # explicitamente alterado para um endereço externo.
-      MQTT_ENABLED: "${MQTT_ENABLED:-true}"
-      MQTT_BIND_ADDRESS: "${MQTT_BIND_ADDRESS:-127.0.0.1}"
-      MQTT_BIND_PORT: "1883"
-      MQTT_SSL_ENABLED: "true"
-      MQTT_SSL_BIND_ADDRESS: "0.0.0.0"
-      MQTT_SSL_BIND_PORT: "8883"
-      MQTT_SSL_PROTOCOL: "TLSv1.2"
-      MQTT_SSL_CREDENTIALS_TYPE: "PEM"
-      MQTT_SSL_PEM_CERT: /etc/thingsboard/certs/server.pem
-      MQTT_SSL_PEM_KEY: /etc/thingsboard/certs/server_key.pem
-      TB_TRANSPORT_SSL_CERTIFICATE_RELOAD_ENABLED: "true"
+      # PROXY protocol (v1/v2) no transporte MQTT: o nginx do host injeta o IP
+      # real do device. Obrigatório: com isso ligado, TODA conexão precisa vir
+      # pelo nginx (por isso o port binding acima é só em loopback).
+      # Em desenvolvimento local, sem o nginx do host, use false no .env para
+      # conectar devices direto em 127.0.0.1:${PORT_MQTT}.
+      MQTT_PROXY_PROTOCOL_ENABLED: "${MQTT_PROXY_PROTOCOL_ENABLED:-true}"
+      # Bloqueio nativo por IP: após N CONNECT com credencial inválida, o IP é
+      # bloqueado por TB_TRANSPORT_IP_BLOCK_TIMEOUT ms e o evento vai ao log
+      # ("IP address blocked due to constantly wrong credentials"), que o
+      # fail2ban do host usa para banir no firewall (ver fail2ban/).
+      # Limiares = padrão do ThingsBoard (10 falhas => 60 s). Bloqueio curto de
+      # propósito: uma Unidade inteira pode sair por um único NAT, e um device
+      # com token errado não deve derrubar os vizinhos por muito tempo. O ban
+      # longo fica a cargo do fail2ban, só para abuso sustentado.
+      TB_TRANSPORT_IP_RATE_LIMITS_ENABLED: "true"
+      TB_TRANSPORT_MAX_WRONG_CREDENTIALS_PER_IP: "10"
+      TB_TRANSPORT_IP_BLOCK_TIMEOUT: "60000"
+      # Diálogo "Check connectivity" da UI: não sugerir CoAP (listener removido).
+      DEVICE_CONNECTIVITY_COAP_ENABLED: "false"
     volumes:
       - tb_data:/data
       - log_data:/var/log/thingsboard
-      - ./certs/server.pem:/etc/thingsboard/certs/server.pem:ro
-      - ./certs/server_key.pem:/etc/thingsboard/certs/server_key.pem:ro
     networks:
       - io
+    # A imagem tb-node loga apenas em STDOUT. Enviar ao journald (com tag) é o
+    # que permite ao fail2ban ler o log do container (backend systemd).
+    # `docker compose logs` continua funcionando com este driver.
+    # O Docker Desktop não tem journald: em desenvolvimento local, use
+    # TB_LOG_DRIVER=json-file no .env.
+    logging:
+      driver: "${TB_LOG_DRIVER:-journald}"
+      options:
+        tag: thingsboard
 
   auth-gateway:
     build:
@@ -150,8 +170,9 @@ services:
         condition: service_healthy
       telemetry-gateway:
         condition: service_healthy
+    # Única entrada web da stack, só em loopback: o nginx do host encaminha o 443 para cá.
     ports:
-      - "${PORT_WEB}:80"
+      - "127.0.0.1:${PORT_WEB}:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
@@ -212,7 +233,7 @@ services:
     image: dpage/pgadmin4:9
     restart: unless-stopped
     ports:
-      - "${PORT_PGADMIN}:80"
+      - "127.0.0.1:${PORT_PGADMIN}:80"
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_USER}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
