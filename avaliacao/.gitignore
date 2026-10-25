@@ -1,0 +1,6 @@
+node_modules/
+.env
+# Resultados restritos: fora do repositório público por enquanto
+04-rbac.mjs
+05-confirma-vazamento.mjs
+RESTRITO-*.md

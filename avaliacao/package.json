@@ -1,0 +1,8 @@
+{
+  "name": "embrapa-io-avaliacao-thingsboard",
+  "private": true,
+  "description": "Testes de integração da avaliação do ThingsBoard 4.4 contra a stack em execução",
+  "dependencies": {
+    "mqtt": "^5.15.2"
+  }
+}
