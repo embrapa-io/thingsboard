@@ -1,0 +1,28 @@
+# Ajustes para desenvolvimento local. Copie para docker-compose.override.yml
+# (ignorado pelo Git); o Docker Compose o aplica automaticamente sobre o
+# docker-compose.yml. Em produção, não crie esse arquivo.
+#
+# Em produção, o nginx do host termina o TLS do MQTT e injeta o IP real do
+# device com PROXY protocol, e o log vai ao journald para o fail2ban. Na
+# máquina de desenvolvimento não há esse nginx e o Docker Desktop não tem
+# journald. Aqui a Central atende MQTTS com os certificados de desenvolvimento
+# (gere com generate-dev-mqtt-certs.*), só na rede Docker: o simulador de
+# devices conecta em thingsboard:8883. Nenhuma porta nova é publicada no host.
+services:
+  thingsboard:
+    environment:
+      MQTT_PROXY_PROTOCOL_ENABLED: "false"
+      MQTT_SSL_ENABLED: "true"
+      MQTT_SSL_BIND_ADDRESS: "0.0.0.0"
+      MQTT_SSL_BIND_PORT: "8883"
+      MQTT_SSL_PROTOCOL: "TLSv1.2"
+      MQTT_SSL_CREDENTIALS_TYPE: "PEM"
+      MQTT_SSL_PEM_CERT: /etc/thingsboard/certs/server.pem
+      MQTT_SSL_PEM_KEY: /etc/thingsboard/certs/server_key.pem
+      # Sem chave do License Portal: modo de não produção (30 dias de uso acumulado).
+      NON_PRODUCTION_USE: "true"
+    volumes:
+      - ./certs/server.pem:/etc/thingsboard/certs/server.pem:ro
+      - ./certs/server_key.pem:/etc/thingsboard/certs/server_key.pem:ro
+    logging:
+      driver: json-file

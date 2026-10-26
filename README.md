@@ -1,6 +1,6 @@
 # ThingsBoard for Embrapa I/O
 
-Configuração de _deploy_ do [ThingsBoard CE](https://thingsboard.io) (_middleware IoT_) no ecossistema do Embrapa I/O.
+Configuração de _deploy_ do [ThingsBoard](https://thingsboard.io) 4.4 (_middleware IoT_) no ecossistema do Embrapa I/O.
 
 Baseado na [configuração de _deploy_ do ThingsBoard usando Docker](https://thingsboard.io/docs/user-guide/install/docker/?ubuntuThingsboardQueue=kafka).
 
@@ -10,14 +10,14 @@ Imagens fixadas na **macro-versão** de cada componente, recebendo apenas _patch
 
 | Componente | Imagem | Versão |
 |---|---|---|
-| ThingsBoard CE | `thingsboard/tb-node` | `4.3.1.1` |
+| ThingsBoard | `thingsboard/tb-node` | `4.4.0` |
 | PostgreSQL | `postgres` | `17` |
 | Apache Kafka | `bitnamilegacy/kafka` | `4.0` |
 | pgAdmin 4 | `dpage/pgadmin4` | `9` |
 | Backup do Postgres | `prodrigestivill/postgres-backup-local` | `17` |
 | Grafana IoT | `grafana/grafana` (+ plugin Infinity) | `12.4.11` (Infinity `4.1.1`) |
 
-> **Não atualizar para a 4.4 ou superior.** A partir da 4.4 (29/09/2026) o ThingsBoard passou para a _Business Source License_ 1.1: uso gratuito limitado a 100 dispositivos (ou 1.000 sem fins comerciais), marca obrigatória e chave de licença com checagem _online_. A linha 4.3 continua Apache 2.0 de forma irrevogável e recebe _patches_ de segurança até 20/07/2027. Neste branch (`iot-tb4.3`, linha 4.3 congelada como base da avaliação) a imagem fica no _patch_ exato (`4.3.1.1`), para que o ambiente avaliado seja reproduzível; um _patch_ 4.3.1.x novo entra só por decisão deliberada. **Nunca** troque a tag para `latest` puro ou para 4.4+. O instalador da 4.4 converte o banco CE para a edição licenciada, o que torna um _upgrade_ acidental irreversível.
+> **Licença.** A partir da 4.4 o ThingsBoard é distribuído sob a _Business Source License_ 1.1. O uso gratuito em produção exige chave emitida pelo License Portal (`TB_LICENSE_SECRET`), com checagem _online_ de hora em hora, e a marca ThingsBoard visível; o plano gratuito comercial vai até 100 dispositivos, 1 instância e 1 Edge. Sem chave, o servidor só sobe em modo de não produção (`TB_NON_PRODUCTION_USE=true`), que desliga após 30 dias de uso acumulado. A ativação fica em `/data/instance-license.data`, no volume. A linha 4.3 (Apache 2.0), base da avaliação anterior, está congelada na tag `iot-tb4.3.0` e no branch `iot-tb4.3`; o _upgrade_ da 4.3 para a 4.4 converte o banco e não tem volta, então faça _backup_ antes (ver "Update").
 
 ## Deploy
 
@@ -116,25 +116,28 @@ cd telemetry-gateway
 npm test
 ```
 
-## MQTT em desenvolvimento local
+## Desenvolvimento local
 
-A Central não termina TLS: em produção, o MQTTS (8883) e o MQTT plain (1883) são
-atendidos pelo nginx do host (ver "Portas e transportes"). Na máquina de
-desenvolvimento, sem esse nginx e no Docker Desktop (que não tem journald),
-defina no `.env` da Central:
+Em produção, o nginx do host termina o TLS do MQTT e injeta o IP real do device
+com PROXY protocol, e o log do ThingsBoard vai ao journald para o fail2ban (ver
+"Portas e transportes"). Na máquina de desenvolvimento não há esse nginx e o
+Docker Desktop não tem journald. Para isso existe o
+`docker-compose.override.example.yml`:
 
-```dotenv
-MQTT_PROXY_PROTOCOL_ENABLED=false
-TB_LOG_DRIVER=json-file
+```sh
+cp docker-compose.override.example.yml docker-compose.override.yml   # ignorado pelo Git
 ```
 
-Os devices de teste conectam em MQTT plain em `127.0.0.1:${PORT_MQTT}` (1884). No
-`.env` do backend, anuncie esse endereço com `THINGSBOARD_DEVICE_MQTT_ENABLED=true`.
+Com ele, a Central atende MQTTS com os certificados de desenvolvimento (ver a
+seção seguinte) só na rede Docker, em `thingsboard:8883`, que é onde o
+simulador de devices publica; o PROXY protocol fica desligado, o log vai para
+`json-file` e o servidor sobe em modo de não produção. Em produção, não crie o
+`docker-compose.override.yml`.
 
-## Certificados MQTTS do Edge para desenvolvimento
+## Certificados MQTTS para desenvolvimento
 
-Os certificados abaixo não são mais usados pela Central. Servem ao MQTTS do
-ThingsBoard Edge em desenvolvimento, cujo compose monta, por padrão,
+Usados pela Central só em desenvolvimento (via `docker-compose.override.yml`) e
+pelo MQTTS do ThingsBoard Edge, cujo compose monta, por padrão,
 `../thingsboard/certs/server.pem` e `server_key.pem`.
 
 No PowerShell:
@@ -281,19 +284,15 @@ sudo fail2ban-client set thingsboard-mqtt unbanip <IP>   # para desfazer o teste
 
 ## Update
 
-Para subir a versão do ThingsBoard (apenas _patches_ 4.3.1.x; **nunca** para a 4.4 ou superior), ajuste a tag em `docker-compose.yml` (linha do serviço `thingsboard`) e execute o procedimento oficial de _upgrade_:
+Antes de qualquer _upgrade_, faça _backup_ do banco (`pg_dump`). O _upgrade_ da 4.3 para a 4.4 converte o banco CE para a edição licenciada e não tem volta.
+
+Ajuste a tag em `docker-compose.yml` (serviço `thingsboard`) e rode a migração com a imagem nova. A versão de origem é lida do próprio banco:
 
 ```sh
-docker compose stop && docker compose pull && docker compose up -d db
-echo '4.3.1.1' > $(pwd)/log/.upgradeversion
-docker run -it --rm \
-  --network "$(docker compose ps --format '{{.Service}} {{.Network}}' db | awk '{print $2}')" \
-  -e SPRING_DATASOURCE_URL=jdbc:postgresql://db:5432/thingsboard \
-  -e SPRING_DATASOURCE_USERNAME="$(grep ^DB_USER= .env | cut -d= -f2)" \
-  -e SPRING_DATASOURCE_PASSWORD="$(grep ^DB_PASSWORD= .env | cut -d= -f2)" \
-  thingsboard/tb-node:<nova-versao> upgrade-tb.sh
-docker compose rm thingsboard
-docker compose up -d --force-recreate --wait
+docker compose stop thingsboard
+docker compose pull thingsboard
+docker compose run --rm -e UPGRADE_TB=true thingsboard
+docker compose up -d --wait
 ```
 
-Substitua `'4.3.1.1'` pela versão **atual** instalada (que será sobrescrita pela nova) e `<nova-versao>` pela mesma _tag_ colocada no `docker-compose.yml` (ex.: `4.3.1.6`). Não use versões 4.4 ou superiores.
+Com chave de produção, defina `TB_LICENSE_SECRET` no `.env` antes de subir; sem ela, o servidor só sobe em modo de não produção.

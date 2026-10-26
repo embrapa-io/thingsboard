@@ -52,7 +52,7 @@ services:
       start_period: 5s
 
   thingsboard:
-    image: thingsboard/tb-node:4.3.1.1
+    image: thingsboard/tb-node:4.4.0
     restart: unless-stopped
     depends_on:
       kafka:
@@ -81,6 +81,15 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/thingsboard
       SPRING_DATASOURCE_USERNAME: ${DB_USER}
       SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
+      # Licença (4.4, BUSL 1.1). Com TB_LICENSE_SECRET, a chave do License Portal
+      # tem prioridade. Sem chave, o servidor só sobe com TB_NON_PRODUCTION_USE=true
+      # (cotas ilimitadas, aviso na interface e desligamento após 30 dias de uso
+      # acumulado). A ativação fica no volume: fora dele, recriar o contêiner gera
+      # outra instância e prende a vaga única do plano Free.
+      NON_PRODUCTION_USE: "${TB_NON_PRODUCTION_USE:-false}"
+      TB_LICENSE_SECRET: "${TB_LICENSE_SECRET:-}"
+      TB_LICENSE_INSTANCE_DATA_FILE: /data/instance-license.data
+      TB_ANONYMOUS_USAGE_REPORTING: "${TB_ANONYMOUS_USAGE_REPORTING:-false}"
       # PROXY protocol (v1/v2) no transporte MQTT: o nginx do host injeta o IP
       # real do device. Obrigatório: com isso ligado, TODA conexão precisa vir
       # pelo nginx (por isso o port binding acima é só em loopback).
