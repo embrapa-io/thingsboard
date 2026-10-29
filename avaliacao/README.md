@@ -23,6 +23,9 @@ node 02-tenant-edges.mjs                   # tenant de teste e as entidades Edge
 node 03-edge-offline.mjs                   # Edge sem servidor, inclusive reiniciando (~6 min)
 node 04-rbac.mjs                           # cenário de RBAC (não versionado; ver abaixo)
 node 06-customer-cria-dispositivo.mjs      # customer user criando dispositivos
+node 07-modelos-rbac.mjs [--manter]        # combinações de RBAC para unidades e localidades
+node 11-implantar-rbac.mjs [--aplicar]     # papéis e grupos na Central de desenvolvimento (simula sem --aplicar)
+node 12-definir-responsaveis.mjs "email=Localidade|unidade:Título" [--aplicar]  # torna alguém Responsável
 ```
 
 Credenciais geradas ficam no `.env` desta pasta e nunca são impressas. As chaves que o `02` grava (`TB44_EDGE<n>_KEY` e `_SECRET`) precisam ir também para o `.env` do Edge que vai usá-las.
@@ -111,6 +114,161 @@ Papel de grupo "Gestor de dispositivos do projeto" (`READ`, `CREATE`, `WRITE`, `
 | C7 | Cota | O dispositivo conta nos 100 da licença. O script apaga os de teste no fim |
 
 Para o pesquisador cadastrar os próprios dispositivos, os grupos de cada projeto precisam pertencer ao customer da unidade, e não ao tenant.
+
+### Combinações de RBAC (`07-modelos-rbac.mjs`, 2026-10-27)
+
+**Cenário:** um tenant, a unidade A com duas localidades (L1 com 2 sensores e L2 com 1) e a unidade B com 1 sensor.
+
+**Pessoas:**
+- o gestor da A;
+- o Maintainer e o Developer da L1;
+- um Developer só da L2;
+- um Developer nas duas localidades;
+- um Maintainer da B que colabora com a L1.
+
+Para cada pessoa e sensor, o script testa quatro ações: ver (V), configurar com atributo compartilhado (C), comandar por RPC (R) e ler o token (K). Testa também a lista de dispositivos visíveis e o cadastro de um sensor novo. O resultado é comparado com o comportamento desejado:
+- **Maintainer:** tudo na própria localidade;
+- **Developer:** só ver;
+- **colaborador de outra unidade:** só ver;
+- **gestor:** tudo na própria unidade.
+
+| Modelo | Como é montado | Diferenças |
+| --- | --- | --- |
+| C1 Unidade aberta | Papéis genéricos na unidade inteira; o perfil vira o papel | 9: todos da unidade veem todas as localidades |
+| **C2 Localidade como grupo** | Por localidade: um grupo de dispositivos e dois de usuários (Responsáveis e Equipe), todos da unidade; papéis de grupo | **0** |
+| **C3 Derivação como sub-customer** | Cada localidade é um sub-customer, dono dos sensores; papéis genéricos no sub-customer | **0** |
+| C5 Posse no tenant | Sensores do tenant em grupos do tenant (estado deixado pelo upgrade) | 7: o gestor não vê nada; ninguém cadastra sensor |
+
+**Mesmo resultado, custo diferente entre C2 e C3:**
+
+| Situação | C2 | C3 |
+| --- | --- | --- |
+| Pessoa em duas localidades | Entra nos dois grupos | Precisa de um grupo extra no sub-customer dela, mais um compartilhamento |
+| `customerId` do sensor | A unidade, como o backend espera | O sub-customer, então o backend teria de subir a hierarquia |
+| Gestor por derivação | Não tem | Tem (administradores do sub-customer) |
+
+**Achados:**
+
+| ID | Achado |
+| --- | --- |
+| C4-P1 a P4 | Um grupo só aceita entidades do mesmo dono ("Unable to add entity with other owner than group"). Não dá para montar um grupo de projeto com sensores ou pessoas de unidades diferentes, nem no tenant. |
+| C2-share, C3-share | O administrador do tenant compartilha um grupo da unidade A com um grupo de usuários da B por permissão direta (`/api/groupPermission`), com o papel escolhido. |
+| C2-G4 | O gestor da A **não** consegue compartilhar com a B: dá 403 na permissão direta e na rota da interface (`/api/v2/entityGroup/{id}/share`). O compartilhamento entre unidades fica com uma conta do tenant. |
+| Compartilhamento "Read" | Pela rota da interface, o compartilhamento de leitura sem papel próprio deu **RPC 200** ao colaborador; só configurar foi bloqueado. Compartilhar sempre com um papel definido por nós. |
+| C2-T0 | O grupo padrão "Customer Users" recebe o papel `Customer User`, que dá token (`READ_CREDENTIALS`) e comando (`RPC_CALL`) em **toda** a unidade. Ninguém deve ser posto nele. |
+| G1, G2, G3, C3-G5 | O gestor (grupo "Customer Administrators") cria usuários e sub-customers na própria unidade, não vê sensores da outra unidade e não vê rule chains. |
+| S1, S2 | Contas de serviço com papel genérico mínimo funcionam. O papel de telemetria (`DEVICE: READ, READ_TELEMETRY`) lê histórico e recebe 403 para gravar, comandar e ler token. O papel de usuários (`USER: READ, READ_ATTRIBUTES`) lê o atributo `manager` e recebe 403 nos sensores. |
+| S3 | O administrador obtém o token de uma pessoa (`/api/user/{id}/token`) e vê exatamente o que ela vê. Esse é o jeito de o backend calcular a aba Disponíveis. |
+| E1, E2 | O Edge recebe um grupo que pertence à unidade, e os sensores chegam a ele com o dono preservado. |
+| O1 | A troca de dono tenant → unidade preenche o `customerId`, mas **tira o sensor dos grupos do tenant**. O script de migração precisa recolocá-lo nos grupos da unidade. |
+| Rota de listagem | `/api/deviceInfos/all` só devolve sensores do tenant; os das unidades exigem `includeCustomers=true`. O backend precisa disso depois da troca de dono. |
+
+### Segregação de regras (`09-segregacao-regras.mjs`, 2026-10-27): 10 PASS
+
+Rule chains não têm grupo. Já os campos calculados e as regras de alarme, que por dentro são um campo calculado do tipo `ALARM`, ficam na própria entidade. Eles são controlados pelas operações `READ_CALCULATED_FIELD` e `WRITE_CALCULATED_FIELD` sobre ela.
+
+| ID | Caso | Resultado |
+| --- | --- | --- |
+| RC1–RC3 | Usuário da unidade com papel genérico `RULE_CHAIN: ALL`; Maintainers | 403 em listar e criar rule chains |
+| CF1, AR1 | Maintainer **usuário da unidade** (`CUSTOMER_USER`) com `WRITE_CALCULATED_FIELD` na L1 cria regra num sensor da L1 | 403: a autoridade `CUSTOMER_USER` nunca usa regras, como diz a documentação de papéis |
+| CF1T, AR1T | Maintainer **usuário do tenant** (`TENANT_ADMIN`) **só com o papel de grupo** sobre a L1 cria campo calculado e regra de alarme num sensor da L1 | ✅ 200 |
+| CF2T, AR2T, CF5T | O mesmo usuário cria regra num sensor da L2 ou no perfil de dispositivo | ✅ 403 (`WRITE_CALCULATED_FIELD ... DEVICE 'rbac9-l2-sensor'` e `... DEVICE_PROFILE 'default'`) |
+| CF3 | Developer da L1, só com leitura de regras, cria regra | ✅ 403 |
+| CF6 | Regra no servidor: temperatura 15 → atributo compartilhado `valvula = 1` | ✅ |
+| E1 | A regra criada pelo Maintainer chega ao Edge quando o grupo da L1 é atribuído a ele | ✅ |
+| E2 | **Servidor desligado:** o Edge aplica a regra sozinho (temperatura 25 → `valvula = 0`; 12 → `valvula = 1`) | ✅ |
+
+**Formato da regra.** O tipo `SIMPLE` só aceita fórmula matemática (`t * 2`). Condições exigem `SCRIPT` em TBEL, com a chave do objeto entre aspas: `return {"valvula": v};`. Por padrão, o resultado passa pela rule chain (`strategy: RULE_CHAIN`) antes de ser gravado.
+
+**Quem cria grupos (teste avulso):**
+- O gestor da unidade cria grupos de sensores e de usuários na própria unidade.
+- O gestor só liga uma equipe a um grupo usando um papel **da própria unidade**; com um papel do tenant, dá 403 (`READ ... ROLE`).
+- Os Maintainers não criam grupos (403 `CREATE ... DEVICE group`), mas cadastram sensores na localidade. O sensor nasce com a unidade como dona, mesmo quando quem o cadastra é usuário do tenant.
+
+### Regra de controle criada pelo pesquisador (`10-regra-hvac.mjs`, 2026-10-27): 7 PASS
+
+**Cenário:** o Responsável da localidade "Sala 1" é usuário do tenant, só com papel de grupo incluindo `WRITE_CALCULATED_FIELD`. Ele cria no HVAC um campo calculado `SCRIPT` com três argumentos:
+- a temperatura do **sensor da sala**, outro dispositivo da mesma localidade (`refEntityId`);
+- o `alvo`, atributo de servidor do HVAC;
+- o `estado`, atributo de cliente que o HVAC confirma.
+
+A saída é o atributo compartilhado `ligado`, com estratégia `IMMEDIATE` e `updateAttributesOnlyOnValueChange`. A histerese é de ±0,5 °C em torno de 24 °C.
+
+| ID | Caso | Resultado |
+| --- | --- | --- |
+| H0, H1 | Responsável grava o alvo e cria a regra pela API | ✅ |
+| H2 | Servidor: 26 → ligado; 24,2 → continua ligado; 23 → desligado; 24,3 → continua desligado; 25 → ligado | ✅ |
+| H3 | A regra chega ao Edge quando o grupo da localidade é atribuído a ele | ✅ |
+| H4 | **Servidor desligado:** 22 → desligado; 24,4 → continua desligado; 27 → ligado | ✅ |
+| H5 | O HVAC, conectado por MQTT ao Edge, recebe `{"ligado":false}` e `{"ligado":true}` por push (`v1/devices/me/attributes`) | ✅ |
+| H6 | Religada a Central, ela recebe o último estado decidido offline | ✅ |
+
+**Achado.** A regra **não recebe o próprio resultado como argumento**: um argumento `ligado`, que é a própria saída, fica sempre no valor padrão. Na primeira rodada, isso quebrou a histerese. Para ter estado, a regra usa o que o dispositivo confirma, num atributo de cliente ou em telemetria. É também o que recomenda o guia de SCADA.
+
+**Login pelo Embrapa I/O (testes avulsos de 2026-10-27):**
+- O frontend aceita `?accessToken=...&refreshToken=...` na URL e apaga os parâmetros ao carregar.
+- Uma conta com o papel genérico `USER: READ, IMPERSONATE` obtém o token de qualquer usuário, **inclusive de administradores do tenant**.
+- O mesmo papel, restrito a um grupo de usuários, dá 403 até para quem está no grupo.
+- Conclusão: a credencial que faz o login único vale tanto quanto a de administrador do tenant.
+
+### Papéis e grupos na Central de desenvolvimento (`11-implantar-rbac.mjs`)
+
+Diferente dos outros scripts, este age na **Central local** (`TB_CENTRAL_URL`, padrão `http://127.0.0.1:9095`), com a chave de API do `backend/.env`. Sem `--aplicar`, só lê e lista o que faria. Pode rodar de novo sem duplicar nada.
+
+| Modelo herdado da 4.3 | Vira |
+| --- | --- |
+| Asset da localidade, com `Contains` para os sensores | Grupo `LOC · <localidade>` da unidade; cada sensor passa a ser da unidade |
+| `AccessibleBy` asset → pessoa da mesma unidade | Pessoa em `<localidade> · Equipe` (papel Membro) |
+| `AccessibleBy` asset → pessoa de outra unidade | Pessoa em `<localidade> · Colaboradores`, grupo da unidade dela (papel Membro) |
+| `AccessibleBy` sensor → pessoa | `DISP · <sensor>` só com ele, sem ampliar para a localidade |
+| Grupo "Customer Users" da unidade (vê tudo, com comando) | Esvaziado |
+
+Também cria os papéis "Responsável pela localidade", "Membro da localidade" e "Gestor da unidade", além de um grupo `Gestores` por unidade e um `<localidade> · Responsáveis` no tenant. O grupo de cada localidade com sensores no Edge01 é atribuído a ele.
+
+Ficam como estão: assets, relações `AccessibleBy` (o backend ainda as usa), contas de serviço e os grupos `Responsáveis`, que nascem vazios porque a Central não sabe quem é Maintainer.
+
+**Aplicado em 2026-10-27**, depois do backup `thingsboard/backup/thingsboard-20261027-140137-antes-rbac.sql.gz`:
+- foram 93 mudanças, das quais 15 trocas de dono e 1 atribuição ao Edge01, sem erro;
+- uma segunda rodada deu 0 mudanças.
+
+Três consequências, aceitas:
+- 3 pessoas sem localidade perderam a visão da unidade;
+- 2 sensores sem localidade ficaram no tenant;
+- o Edge01 passou a receber a localidade PAVAP inteira, com 3 sensores a mais.
+
+**Verificação:** com o token de cada pessoa, a Central e o `resolveAllowedScope` do backend deram o mesmo número de sensores.
+
+| Pessoa | Sensores |
+| --- | --- |
+| fdsfds, com PAVAP e Nhumirim como colaboradora | 8 |
+| stage1.pilot | 5 |
+| mariana.pereira | 1 |
+| As outras três | 0 |
+
+Em todos os casos, a pessoa lê a telemetria e recebe 403 ao gravar atributo.
+
+**Responsáveis (`12-definir-responsaveis.mjs`, aplicado em 2026-10-28)**, depois do backup `thingsboard-20261028-165443-antes-responsaveis.sql.gz`.
+
+O Responsável precisa ser usuário do tenant, então a conta de unidade é apagada e recriada com o mesmo e-mail. A unidade de origem fica em `additionalInfo.unidadeOrigem`. O script preserva duas coisas:
+- as leituras que a pessoa já tinha, em grupos equivalentes do tenant;
+- as relações `AccessibleBy`, refeitas para o id novo, mais as das localidades novas;
+- os atributos de servidor da conta antiga. Na primeira rodada, isso não acontecia: fdsfds perdeu o `manager = true`, que o `auth-gateway` exige na porta 9090, e o atributo foi reposto à mão.
+
+A conta recriada nasce **sem senha**: até ser ativada pelo link de ativação, o login dá "User is not active". Pela 9090, isso aparece como 401, e depois como 429 pelo limite de 5 tentativas por minuto do Nginx.
+
+| Pessoa | Responsável por | Também lê | Sensores |
+| --- | --- | --- | --- |
+| fdsfds (origem: Gado de Corte) | PAVAP, Casa de vegetação 01 e Campo Grande | Nhumirim, como colaboradora | 12 |
+| maxwell (origem: Pantanal) | PAVAP | — | 6 |
+
+**Verificação, com o token de cada um:**
+- grava atributo e cria campo calculado nas próprias localidades;
+- recebe 403 ao gravar ou criar regra em Nhumirim e fora delas;
+- recebe 403 nas rule chains;
+- a lista de usuários volta vazia;
+- o `resolveAllowedScope` do backend dá os mesmos 12 e 6.
+
+**Regressão encontrada:** depois da troca de dono, `/api/deviceInfos/all` só devolve os sensores da unidade com `includeCustomers=true`. Sem esse parâmetro, o status online do backend cobria só 2 dos 17 sensores; o `helper/thingsboard.js` foi corrigido.
 
 ## Conclusões
 

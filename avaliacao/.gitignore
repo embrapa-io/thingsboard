@@ -4,3 +4,4 @@ node_modules/
 04-rbac.mjs
 05-confirma-vazamento.mjs
 RESTRITO-*.md
+08-historico-websocket.mjs
