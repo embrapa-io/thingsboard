@@ -114,11 +114,14 @@ const createAuthGateway = ({ env = process.env, fetchImpl = global.fetch } = {})
   const maxBodyBytes = Number.isFinite(Number(env.AUTH_GATEWAY_MAX_BODY_BYTES)) && Number(env.AUTH_GATEWAY_MAX_BODY_BYTES) > 0
     ? Number(env.AUTH_GATEWAY_MAX_BODY_BYTES)
     : DEFAULT_MAX_BODY_BYTES
+  // Com o RBAC por laboratório, quem pode o quê é decidido pelo próprio ThingsBoard; o gateway
+  // só confirma que o token é válido. O filtro antigo pelo atributo `manager` fica opcional.
+  const requireManager = String(env.AUTH_GATEWAY_REQUIRE_MANAGER || '').trim().toLowerCase() === 'true'
   const requestUpstream = createRequester({ fetchImpl, baseUrl, timeoutMs })
 
   const checkManager = async accessToken => {
     if (!accessToken) return { kind: 'invalid' }
-    if (!gatewayToken) return { kind: 'unavailable' }
+    if (requireManager && !gatewayToken) return { kind: 'unavailable' }
 
     let userResponse
     try {
@@ -134,6 +137,7 @@ const createAuthGateway = ({ env = process.env, fetchImpl = global.fetch } = {})
 
     const userId = getEntityId(userResponse.data)
     if (!userId) return { kind: 'unavailable' }
+    if (!requireManager) return { kind: 'manager' }
 
     let attributesResponse
     try {

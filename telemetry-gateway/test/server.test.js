@@ -155,3 +155,68 @@ test('health reports configuration state', async t => {
   assert.equal(result.status, 200)
   assert.deepEqual(await result.json(), { status: 'ok' })
 })
+
+// Chaves de aplicação: o backend é simulado; ele recebe o segredo compartilhado e a chave
+const APP_KEY = 'ioa_' + 'k'.repeat(40)
+const backendStub = calls => async (url, options) => {
+  calls.push({ url, headers: options.headers })
+  if (options.headers['X-API-Key'] !== APP_KEY) return new Response('{}', { status: 401 })
+  return new Response(JSON.stringify({ app: 'app-1', devices: [{ id: DEVICE_A, name: 'Sensor_A', label: 'Sensor A' }] }), { status: 200 })
+}
+
+const startWithBackend = async (t, calls, fetchImpl = backendStub(calls)) => {
+  const server = createTelemetryGateway({
+    clock: () => NOW,
+    fetchImpl,
+    env: { TELEMETRY_JWT_SECRET: SECRET, TB_TELEMETRY_TOKEN: 'service-key', BACKEND_URL: 'http://backend:3000/' }
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  t.after(() => server.close())
+  return 'http://127.0.0.1:' + server.address().port
+}
+
+const authorizeWithKey = (baseUrl, uri, key) => fetch(baseUrl + '/internal/authorize', {
+  headers: { 'X-Original-URI': uri, 'X-Original-Method': 'GET', 'X-API-Key': key }
+})
+
+test('app key reads only the devices the backend allows', async t => {
+  const calls = []
+  const baseUrl = await startWithBackend(t, calls)
+
+  const allowed = await authorizeWithKey(baseUrl, `/telemetry/DEVICE/${DEVICE_A}/values/timeseries`, APP_KEY)
+  assert.equal(allowed.status, 204)
+  assert.equal(allowed.headers.get('x-telemetry-path'), `DEVICE/${DEVICE_A}/values/timeseries`)
+  assert.equal(allowed.headers.get('x-telemetry-authorization'), 'ApiKey service-key')
+  assert.equal(calls[0].url, 'http://backend:3000/iot/apps/internal/authorize')
+  assert.equal(calls[0].headers['X-Telemetry-Gateway'], SECRET)
+
+  assert.equal((await authorizeWithKey(baseUrl, `/telemetry/DEVICE/${DEVICE_B}/values/timeseries`, APP_KEY)).status, 403)
+  assert.equal((await authorizeWithKey(baseUrl, '/telemetry/values/timeseries', APP_KEY)).status, 403)
+})
+
+test('revoked, unknown or malformed app keys are refused', async t => {
+  const calls = []
+  const baseUrl = await startWithBackend(t, calls)
+  const uri = `/telemetry/DEVICE/${DEVICE_A}/values/timeseries`
+
+  assert.equal((await authorizeWithKey(baseUrl, uri, 'ioa_' + 'z'.repeat(40))).status, 401)
+  assert.equal((await authorizeWithKey(baseUrl, uri, 'not-a-key')).status, 401)
+  // a chave malformada nem chega ao backend
+  assert.equal(calls.length, 1)
+})
+
+test('app key check fails closed when the backend is down', async t => {
+  const baseUrl = await startWithBackend(t, [], async () => { throw new Error('ECONNREFUSED') })
+  assert.equal((await authorizeWithKey(baseUrl, `/telemetry/DEVICE/${DEVICE_A}/values/timeseries`, APP_KEY)).status, 503)
+})
+
+test('devices endpoint lists what the app key reads', async t => {
+  const baseUrl = await startWithBackend(t, [])
+
+  const listed = await fetch(baseUrl + '/devices', { headers: { 'X-API-Key': APP_KEY } })
+  assert.equal(listed.status, 200)
+  assert.deepEqual(await listed.json(), [{ id: DEVICE_A, name: 'Sensor_A', label: 'Sensor A' }])
+
+  assert.equal((await fetch(baseUrl + '/devices')).status, 401)
+  assert.equal((await fetch(baseUrl + '/devices', { headers: { 'X-API-Key': 'ioa_' + 'z'.repeat(40) } })).status, 401)
+})

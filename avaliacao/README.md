@@ -26,6 +26,8 @@ node 06-customer-cria-dispositivo.mjs      # customer user criando dispositivos
 node 07-modelos-rbac.mjs [--manter]        # combinações de RBAC para unidades e localidades
 node 11-implantar-rbac.mjs [--aplicar]     # papéis e grupos na Central de desenvolvimento (simula sem --aplicar)
 node 12-definir-responsaveis.mjs "email=Localidade|unidade:Título" [--aplicar]  # torna alguém Responsável
+node 13-regras-do-edge.mjs                 # papel sobre o Edge alcança as rule chains dele? (Central, cria e apaga)
+node 14-cadastro-por-laboratorio.mjs       # pesquisador cadastra só no próprio laboratório (Central, cria e apaga)
 ```
 
 Credenciais geradas ficam no `.env` desta pasta e nunca são impressas. As chaves que o `02` grava (`TB44_EDGE<n>_KEY` e `_SECRET`) precisam ir também para o `.env` do Edge que vai usá-las.
@@ -184,6 +186,33 @@ Rule chains não têm grupo. Já os campos calculados e as regras de alarme, que
 - O gestor da unidade cria grupos de sensores e de usuários na própria unidade.
 - O gestor só liga uma equipe a um grupo usando um papel **da própria unidade**; com um papel do tenant, dá 403 (`READ ... ROLE`).
 - Os Maintainers não criam grupos (403 `CREATE ... DEVICE group`), mas cadastram sensores na localidade. O sensor nasce com a unidade como dona, mesmo quando quem o cadastra é usuário do tenant.
+
+### Rule chains só do Edge (`13-regras-do-edge.mjs`, 2026-11-02)
+
+Pergunta: um papel sobre o Edge (que tem grupo, ao contrário das rule chains) libera só as rule chains atribuídas a ele? Rodado na Central de desenvolvimento (4.4.0), com um Edge só de cadastro, rule chains de teste e limpeza no fim. A raiz do tenant só foi lida.
+
+| Pessoa | Edge | Lista as rule chains do Edge | Lê, regrava, cria, desatribui ou atribui rule chain; lê a raiz do Edge ou do tenant |
+| --- | --- | --- | --- |
+| U1: usuário da unidade, `ALL` no grupo do Edge | 200 | 403 | 403 em todos |
+| U2: usuário do tenant, `ALL` no grupo do Edge | 200 | 200 (só nome e id) | 403 em todos (`... operation with RULE_CHAIN`) |
+| U3: usuário do tenant, genérico `EDGE: ALL` | 200 | 200 (só nome e id) | 403 em todos |
+
+**Credenciais do Edge (casos K, mesma data):** `GET /api/edge/{id}` devolve `routingKey` e `secret` a **qualquer** pessoa que leia o Edge, inclusive um usuário da unidade só com `READ` no grupo do Edge (U0). Com elas, um Edge falso pode conectar no lugar do verdadeiro e receber o que está atribuído a ele. A listagem `/api/customer/{id}/edgeInfos` deu 403 a todos. Consequência: leitura de Edge é só para a equipe técnica.
+
+**Conclusão:** a permissão sobre o Edge não se estende às rule chains dele. Toda operação é checada no recurso `RULE_CHAIN`, que só existe como papel genérico para o tenant inteiro (R7/R8). Não há como liberar ao pesquisador só as regras do Edge pelo RBAC da 4.4.
+
+### Cadastro só no próprio laboratório (`14-cadastro-por-laboratorio.mjs`, 2026-11-02): 14 PASS
+
+Usuário da unidade (`CUSTOMER_USER`) com o papel de grupo "Edição" (`READ`, atributos, telemetria, `CREATE`, `WRITE`, `WRITE_ATTRIBUTES`, `DELETE`, `READ_CREDENTIALS`) sobre o grupo do laboratório L1, mais o genérico "Interface" com `DEVICE_PROFILE: READ`. Central de desenvolvimento, entidades de teste apagadas no fim.
+
+| ID | Caso | Resultado |
+| --- | --- | --- |
+| D1–D5 | Cria sensor na L1 (nasce com a unidade como dona), lê o token, edita, lista perfis, exclui | ✅ 200 |
+| N1 | Cria sensor em outro laboratório da **mesma unidade** (L2) | ✅ 403 (`READ ... DEVICE group`) |
+| N2 | Cria sensor em laboratório de outra unidade | ✅ 403 |
+| N3 | Cria sem indicar o grupo | ✅ 403 |
+| N4, N5 | Põe o próprio sensor na L2; traz um sensor da L2 para a L1 | ✅ 403 (`ADD_TO_GROUP`) |
+| N6–N8 | Lê token, edita ou exclui sensor da L2 | ✅ 403 |
 
 ### Regra de controle criada pelo pesquisador (`10-regra-hvac.mjs`, 2026-10-27): 7 PASS
 

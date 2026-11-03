@@ -47,6 +47,38 @@ const getBearerToken = request => {
   return match ? match[1] : ''
 }
 
+const getApiKey = request => String(request.headers['x-api-key'] || '').trim()
+
+// Chave de aplicação (aba Aplicações do Embrapa I/O): o backend confere a chave a cada
+// consulta, sem cache, para que trocar ou revogar valha na hora.
+const verifyApiKey = async (key, { backendUrl, secret, fetchImpl }) => {
+  if (!/^ioa_[a-z0-9]{8,124}$/.test(key)) deny(401, 'invalid key')
+
+  let response
+  try {
+    response = await fetchImpl(backendUrl + '/iot/apps/internal/authorize', {
+      headers: { 'X-Telemetry-Gateway': secret, 'X-API-Key': key },
+      signal: AbortSignal.timeout(3000)
+    })
+  } catch {
+    deny(503, 'backend unavailable')
+  }
+
+  if (response.status === 401) deny(401, 'invalid key')
+  if (response.status !== 200) deny(503, 'backend refused key check')
+
+  const body = await response.json().catch(() => null)
+  if (!body || typeof body.app !== 'string' || !Array.isArray(body.devices)) deny(503, 'invalid key check response')
+
+  const list = body.devices.filter(device => device && typeof device.id === 'string' && uuidPattern.test(device.id))
+  return {
+    scope: 'app',
+    subject: body.app,
+    devices: new Set(list.map(device => device.id.toLowerCase())),
+    list: list.map(device => ({ id: device.id.toLowerCase(), name: String(device.name || ''), label: String(device.label || '') }))
+  }
+}
+
 const verifyToken = (token, { secret, issuer, audience, now }) => {
   const parts = token.split('.')
   if (parts.length !== 3) deny(401, 'malformed token')
@@ -192,27 +224,35 @@ const normalizeQuery = (resource, params, { maxRangeMs, maxPoints, now }) => {
   return output
 }
 
-const createTelemetryGateway = ({ env = process.env, clock = Date.now, log = () => {} } = {}) => {
+const createTelemetryGateway = ({ env = process.env, clock = Date.now, log = () => {}, fetchImpl = fetch } = {}) => {
   const secret = String(env.TELEMETRY_JWT_SECRET || '')
   const serviceToken = String(env.TB_TELEMETRY_TOKEN || '').trim()
+  const backendUrl = String(env.BACKEND_URL || 'http://app:3000').replace(/\/$/, '')
   const issuer = String(env.TELEMETRY_JWT_ISSUER || 'embrapa-io')
   const audience = String(env.TELEMETRY_JWT_AUDIENCE || 'telemetry')
   const maxRangeDays = Number(env.TELEMETRY_MAX_RANGE_DAYS) > 0 ? Number(env.TELEMETRY_MAX_RANGE_DAYS) : DEFAULT_MAX_RANGE_DAYS
   const maxPoints = Number.isInteger(Number(env.TELEMETRY_MAX_POINTS)) && Number(env.TELEMETRY_MAX_POINTS) > 0 ? Number(env.TELEMETRY_MAX_POINTS) : DEFAULT_MAX_POINTS
   const ready = secret.length >= MIN_SECRET_LENGTH && serviceToken.length > 0
 
-  const authorize = request => {
+  // JWT de projeto ou de dispositivo no Authorization, ou chave de aplicação no X-API-Key
+  const grantFor = async (request, now) => {
+    const key = getApiKey(request)
+    if (key) return verifyApiKey(key, { backendUrl, secret, fetchImpl })
+
+    const token = getBearerToken(request)
+    if (!token) deny(401, 'missing token')
+    return verifyToken(token, { secret, issuer, audience, now })
+  }
+
+  const authorize = async request => {
     // Sem segredo ou sem credencial de serviço, a camada falha fechada.
     if (!ready) deny(503, 'gateway not configured')
 
     const method = String(request.headers['x-original-method'] || '').toUpperCase()
     if (method !== 'GET' && method !== 'HEAD') deny(403, 'method not allowed')
 
-    const token = getBearerToken(request)
-    if (!token) deny(401, 'missing token')
-
     const now = clock()
-    const grant = verifyToken(token, { secret, issuer, audience, now })
+    const grant = await grantFor(request, now)
 
     const original = new URL(String(request.headers['x-original-uri'] || '/'), 'http://telemetry')
     const target = resolveTarget(original.pathname, grant)
@@ -225,7 +265,7 @@ const createTelemetryGateway = ({ env = process.env, clock = Date.now, log = () 
     return { grant, target, query }
   }
 
-  const handler = (request, response) => {
+  const handler = async (request, response) => {
     const url = new URL(request.url || '/', 'http://telemetry-gateway')
 
     if (request.method === 'GET' && url.pathname === '/health') {
@@ -233,9 +273,27 @@ const createTelemetryGateway = ({ env = process.env, clock = Date.now, log = () 
       return response.end(JSON.stringify({ status: ready ? 'ok' : 'unconfigured' }))
     }
 
+    // Lista os dispositivos que a chave de aplicação lê (GET /telemetry/devices)
+    if (request.method === 'GET' && url.pathname === '/devices') {
+      try {
+        if (!ready) deny(503, 'gateway not configured')
+        const key = getApiKey(request)
+        if (!key) deny(401, 'missing key')
+        const grant = await verifyApiKey(key, { backendUrl, secret, fetchImpl })
+        log({ result: 'allowed', scope: grant.scope, subject: grant.subject, resource: 'devices' })
+        response.writeHead(200, jsonHeaders)
+        return response.end(JSON.stringify(grant.list))
+      } catch (error) {
+        const status = error instanceof Denied ? error.status : 503
+        log({ result: 'denied', status, reason: error instanceof Denied ? error.reason : 'internal error' })
+        response.writeHead(status, jsonHeaders)
+        return response.end(JSON.stringify({ message: status === 401 ? 'Invalid key' : 'Unavailable' }))
+      }
+    }
+
     if (request.method === 'GET' && url.pathname === '/internal/authorize') {
       try {
-        const { grant, target, query } = authorize(request)
+        const { grant, target, query } = await authorize(request)
         log({ result: 'allowed', scope: grant.scope, subject: grant.subject, device: target.deviceId, resource: target.resource })
         response.writeHead(204, {
           'X-Telemetry-Path': 'DEVICE/' + target.deviceId + '/' + target.resource + '/timeseries',

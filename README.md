@@ -38,10 +38,14 @@ ThingsBoard fica acessível apenas na rede Docker interna e o `auth-gateway` tam
 não publica porta no host. MQTT, MQTTS e Edge RPC continuam nas portas próprias e
 não passam pela política web.
 
-O gateway encaminha login e renovação ao ThingsBoard e só devolve tokens quando o
-usuário possui o atributo de servidor `manager` com valor booleano real `true`.
-Usuários sem o atributo, com `false` ou com valor textual recebem `403`; falhas da
-dependência negam por `503`. O gateway não registra credenciais nem tokens.
+O gateway encaminha login e renovação ao ThingsBoard e confirma o token na rota
+`/api/auth/user`. O que cada pessoa pode fazer é decidido pelo RBAC do próprio
+ThingsBoard (grupos e papéis por laboratório, ver [rbac/README.md](rbac/README.md)).
+Falhas da dependência negam por `503`. O gateway não registra credenciais nem tokens.
+
+Com `TB_AUTH_GATEWAY_REQUIRE_MANAGER=true`, volta o filtro antigo: só devolve tokens
+quando o usuário possui o atributo de servidor `manager` com valor booleano real
+`true`; sem o atributo, com `false` ou com valor textual, a resposta é `403`.
 
 Antes de subir a entrada web, crie no ThingsBoard uma credencial exclusiva e
 revogável para o gateway, com permissão suficiente para consultar atributos de
@@ -51,8 +55,9 @@ usuários, e defina somente no `.env` (nunca no navegador):
 TB_AUTH_GATEWAY_TOKEN=<token-interno-do-auth-gateway>
 ```
 
-O valor não deve ser reutilizado pelo backend ou por um usuário humano. Sem essa
-variável o gateway permanece em falha fechada e os logins retornam `503`.
+O valor não deve ser reutilizado pelo backend ou por um usuário humano. Ele só é
+usado com `TB_AUTH_GATEWAY_REQUIRE_MANAGER=true`; nesse modo, sem a variável, o
+gateway permanece em falha fechada e os logins retornam `503`.
 
 Valide a configuração e os testes do gateway antes de recriar a stack:
 
@@ -74,19 +79,26 @@ proibido; os demais diálogos não são modificados.
 
 ## Camada de telemetria e Grafana IoT
 
-A telemetria é lida por `/telemetry/`, sempre via API do ThingsBoard e sem
-passar pelo Embrapa I/O. O `telemetry-gateway` valida um JWT assinado com
-`TELEMETRY_JWT_SECRET` e o NGINX repassa ao ThingsBoard somente a consulta
-normalizada por ele, com a credencial de serviço `TB_TELEMETRY_TOKEN`, que
-nunca sai da stack.
+A telemetria é lida por `/telemetry/`, sempre via API do ThingsBoard. O
+`telemetry-gateway` valida a credencial e o NGINX repassa ao ThingsBoard somente
+a consulta normalizada por ele, com a credencial de serviço `TB_TELEMETRY_TOKEN`,
+que nunca sai da stack.
 
-Há dois escopos de token:
+Há duas credenciais:
 
-- **projeto**: gerado pelo autômato `iot` do Embrapa I/O e gravado no
-  data source Infinity da organização do projeto no Grafana. Lista os
-  dispositivos vinculados; o caminho leva o ID: `/telemetry/DEVICE/{id}/...`.
-- **dispositivo**: gerado pelo backend na aba Consumo do diálogo "Dados de
-  acesso". O ID vem do próprio token: `/telemetry/values/timeseries`.
+- **JWT de projeto**: assinado com `TELEMETRY_JWT_SECRET` pelo autômato `iot` do
+  Embrapa I/O e gravado no data source Infinity da organização do projeto no
+  Grafana. Lista os dispositivos vinculados; o caminho leva o ID:
+  `/telemetry/DEVICE/{id}/...`.
+- **chave de aplicação** (`X-API-Key: ioa_...`): criada na aba Aplicações do
+  diálogo de dispositivos IoT. Não expira; pode ser trocada ou revogada, com efeito
+  imediato. O gateway confere a chave no backend a cada consulta
+  (`/iot/apps/internal/authorize`, com `TELEMETRY_JWT_SECRET` no cabeçalho
+  `X-Telemetry-Gateway`) e só libera os dispositivos escolhidos que seguem
+  vinculados ao projeto. `GET /telemetry/devices` lista esses dispositivos.
+
+O JWT de dispositivo (antiga aba Consumo) não é mais emitido; o gateway ainda
+aceita os já emitidos até expirarem.
 
 Somente leitura de telemetria é aceita (`values/timeseries` e
 `keys/timeseries`, apenas GET). Períodos maiores que `TELEMETRY_MAX_RANGE_DAYS`
@@ -94,12 +106,15 @@ são recortados para os dias mais recentes e cada consulta devolve no máximo
 `TELEMETRY_MAX_POINTS` pontos. Exemplo:
 
 ```sh
-curl -H "Authorization: Bearer $TOKEN"   "http://localhost:9090/telemetry/values/timeseries?keys=temperature&startTs=1788235200000&endTs=1790827200000&agg=AVG&interval=86400000"
+curl -H "X-API-Key: $IO_APP_KEY" "http://localhost:9090/telemetry/devices"
+curl -H "X-API-Key: $IO_APP_KEY" "http://localhost:9090/telemetry/DEVICE/$SENSOR/values/timeseries?keys=temperature&startTs=1788235200000&endTs=1790827200000&agg=AVG&interval=86400000"
 ```
 
-`TB_TELEMETRY_TOKEN` é uma API key de um usuário de serviço exclusivo
-(`telemetry-gateway@iot.embrapa.br`, tenant admin ativado, sem o atributo
-`manager`). O ThingsBoard só aceita API keys de usuários ativados.
+`TB_TELEMETRY_TOKEN` é a API key da conta de serviço `servico.telemetria@embrapa.local`,
+um usuário do tenant cujo único papel (`Serviço · Telemetria`) lê dispositivos e
+telemetria em todas as unidades: não lê credenciais MQTT, não grava telemetria, não
+manda RPC e não vê usuários nem rule chains. `rbac/servico-telemetria.mjs` cria a
+conta e grava a chave no `.env`; `rbac/conferir-telemetria.mjs` confere as permissões.
 
 O Grafana IoT roda nesta stack (`grafana`), com o plugin Infinity
 pré-instalado. Cada projeto do Embrapa I/O tem uma organização própria: no
