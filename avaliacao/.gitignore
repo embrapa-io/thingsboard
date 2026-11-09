@@ -5,3 +5,5 @@ node_modules/
 05-confirma-vazamento.mjs
 RESTRITO-*.md
 08-historico-websocket.mjs
+15-mcp-por-perfil.mjs
+*.private.json

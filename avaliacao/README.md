@@ -28,6 +28,7 @@ node 11-implantar-rbac.mjs [--aplicar]     # papéis e grupos na Central de dese
 node 12-definir-responsaveis.mjs "email=Localidade|unidade:Título" [--aplicar]  # torna alguém Responsável
 node 13-regras-do-edge.mjs                 # papel sobre o Edge alcança as rule chains dele? (Central, cria e apaga)
 node 14-cadastro-por-laboratorio.mjs       # pesquisador cadastra só no próprio laboratório (Central, cria e apaga)
+node 15-mcp-por-perfil.mjs                 # o que gestor, Responsável e Equipe fazem pelo MCP (não versionado; Central, cria e apaga)
 ```
 
 Credenciais geradas ficam no `.env` desta pasta e nunca são impressas. As chaves que o `02` grava (`TB44_EDGE<n>_KEY` e `_SECRET`) precisam ir também para o `.env` do Edge que vai usá-las.
@@ -201,6 +202,131 @@ Pergunta: um papel sobre o Edge (que tem grupo, ao contrário das rule chains) l
 
 **Conclusão:** a permissão sobre o Edge não se estende às rule chains dele. Toda operação é checada no recurso `RULE_CHAIN`, que só existe como papel genérico para o tenant inteiro (R7/R8). Não há como liberar ao pesquisador só as regras do Edge pelo RBAC da 4.4.
 
+### Regras com a chave Free (`16-regras-com-licenca.mjs`, 2026-11-07): 6 PASS
+
+Pergunta de Camilo (03/11): as restrições de rule chain vinham da falta da licença? Repete os casos centrais do 09 na Central, já com a chave Free ativa. A parte do Edge fica de fora, porque o Free tem uma única vaga de Edge e ela está ocupada. As entidades `rbac16` foram apagadas no fim, e a limpeza foi conferida.
+
+| ID | Caso | Resultado |
+| --- | --- | --- |
+| RC1, RC2 | Usuário da unidade com o papel genérico `RULE_CHAIN: ALL` lista e cria rule chains | 403 |
+| RC3T | Usuário do tenant, só com papel de grupo, lista rule chains | 403 (`READ ... RULE_CHAIN`) |
+| CF1 | Usuário da unidade com `WRITE_CALCULATED_FIELD` na L1 cria campo calculado | 403 (informativo; igual ao 09) |
+| CF1T | Usuário do tenant, só com papel de grupo, cria campo calculado num sensor da L1 | 200 |
+| CF2T, CF5T | O mesmo usuário num sensor da L2 ou no perfil | 403 |
+
+**Conclusão:** a licença não muda nada; a resposta é idêntica à do modo de não produção. Rule chains continuam sem grupo. O "se X, aciona Y" segregado por localidade é o campo calculado, para Responsável com autoridade `TENANT_ADMIN` e só papel de grupo.
+
+### Regra modelo da plataforma, parâmetros do pesquisador (`17-regra-modelo-parametros.mjs`, 2026-11-07): 11 PASS
+
+É a alternativa para dar "se X, aciona Y" sem usuário do tenant. A plataforma, com a chave de API do tenant, instala no atuador um campo calculado modelo. O Responsável, usuário da unidade com o papel real "Laboratório · Edição", só ajusta `limite_min`, `limite_max` e `habilitada`, atributos de servidor do atuador. O dispositivo confirma o estado em `estado` (atributo de cliente), que a histerese usa. O teste rodou na Central, com entidades `rbac17` apagadas no fim e limpeza conferida.
+
+| ID | Caso | Resultado |
+| --- | --- | --- |
+| M1 | Plataforma instala a regra "Modelo · Controle de umidade v1" no umidificador da L1, lendo o sensor da L1 | ✅ 200 |
+| P1 | Responsável ajusta limites e habilita | ✅ 200 |
+| P2, P3 | Responsável num umidificador da L2; Equipe na L1 | ✅ 403 (`WRITE_ATTRIBUTES`) |
+| P4, P6 | Responsável cria regra própria ou apaga a instalada | ✅ 403 |
+| P5 | Responsável lê a regra | ℹ️ 403: usuário da unidade não enxerga campos calculados; vê só os parâmetros |
+| F1 | Histerese 45/55, umidade 60→44→43→50→56→57 | ✅ desligado, liga, liga, liga, desliga, desliga |
+| F2 | Responsável muda os limites para 30/40 | ✅ vale na leitura seguinte |
+| F3 | Limites invertidos (60/40) | ✅ ignorados; o atuador fica como estava |
+| F4 | `habilitada = false` | ✅ a regra não mexe no atuador |
+| A1 | Responsável grava direto o atributo de saída `ligar` | ℹ️ 200: quem ajusta parâmetros também aciona por atributo |
+| A2 | Equipe grava o atributo de saída | ✅ 403 |
+
+A sincronização com o Edge e o funcionamento offline não foram repetidos aqui, porque a única vaga de Edge do Free está ocupada. Já tinham sido provados nos testes 09 (E1/E2) e 10.
+
+### Painel de controle e regra com dois atuadores (`18-painel-controle.mjs`, 2026-11-07)
+
+No PAVAP da Central foram criados três dispositivos simulados: "Teste controle · Sensor de umidade da sala", "· Umidificador" e "· Ar-condicionado". A plataforma instalou duas regras modelo, **uma por atuador**, porque o campo calculado só grava no próprio dispositivo. As duas leem o mesmo sensor e os mesmos parâmetros, que ficam no umidificador. O painel "Teste controle · Umidade da sala do PAVAP" fica no grupo de painéis do PAVAP.
+
+Arquivos do teste:
+- `18-simulador.mjs` responde pelos equipamentos: lê `ligar`, confirma em `estado` e faz a umidade subir ou cair.
+- `18-navegador.mjs` abre o painel como uma pessoa, num Edge sem interface, e clica, digita e salva.
+- `18-estado.mjs` mostra os valores atuais.
+- Para remover tudo: `node 18-painel-controle.mjs --limpar`.
+
+Widgets usados, todos de fábrica e sem RPC:
+- *Single switch* com a ação **Set attribute**: `ligar` (compartilhado) e `habilitada` (servidor). O estado inicial é **Get attribute**, com o `estado` confirmado pelo equipamento.
+- *Update Multiple Attributes* para `limite_min` e `limite_max` (servidor, número).
+
+| Quem | Ação no navegador | Resultado |
+| --- | --- | --- |
+| fdsfds (Responsável, usuário da unidade) | Abre o painel | ✅ 5 widgets, sem erro; os botões refletem o estado real |
+| fdsfds | Desliga "Automático" e liga o umidificador à mão | ✅ `habilitada=false`; umidificador pedido e confirmado |
+| fdsfds | Digita 40 e 60 no formulário e salva | ✅ limites 40/60 gravados |
+| fdsfds | Religa "Automático" com a umidade em 63 % | ✅ a regra desliga o umidificador e liga o ar-condicionado, os dois confirmados |
+| maxwell (Equipe) | Clica nos botões e salva limites | ✅ 403, aviso "Falha ao executar a ação" na tela; nada mudou |
+
+Não testado no navegador: editar os limites pela aba de atributos do dispositivo. A permissão é a mesma `WRITE_ATTRIBUTES` do caso P1 do teste 17.
+
+### Rule chain só para leitura (`19-regras-so-leitura.mjs`, 2026-11-07): 4 PASS
+
+Teste do papel genérico `RULE_CHAIN: READ`, rodado na Central, com entidades `rbac19` apagadas no fim.
+
+| Quem | Lista | Abre o conteúdo (nós e scripts) | Renomeia ou cria |
+| --- | --- | --- | --- |
+| Usuário da unidade | 403 | 403 | 403 |
+| Usuário do tenant | 200, **todas** as rule chains do tenant | 200 | 403 |
+
+**Conclusão:**
+- Leitura sem edição existe, mas só para usuário do tenant, e vale para todas as rule chains do tenant, não só as do laboratório.
+- Para usuário da unidade, não existe acesso nenhum.
+
+### Widget "Regras do equipamento" (`20-widget-regras.mjs`, 2026-11-07): 11 PASS no navegador
+
+O pesquisador, como usuário da unidade, cria regras simples nos próprios equipamentos de dentro do ThingsBoard. O modelo é "se `<chave do sensor>` ficar acima/abaixo de X, ligar/desligar este equipamento; voltar quando passar de Y".
+
+**Como funciona:**
+1. O widget (tipo de tenant `embrapa_regras_equipamento`, no pacote "Embrapa · Regras") chama o backend do Embrapa I/O (`/iot/rules`) com o **token da sessão do ThingsBoard**.
+2. O backend descobre quem é a pessoa e confere no próprio ThingsBoard o que ela pode fazer:
+   - permissão de grupo com `WRITE_ATTRIBUTES` no atuador;
+   - gravação real do atributo `regras_alteradas_por` com o token dela.
+3. Se puder, gera **um campo calculado por atuador** e o instala com a chave da plataforma. A expressão só contém identificadores gerados pelo backend e números validados.
+4. As regras ficam guardadas no Mongo (`iotrulesets`).
+5. "Regras ativas" grava `regras_ativas` com o token da pessoa; desligado, o equipamento fica no manual.
+
+**Código:** `backend/helper/iotRules.js`, `business/iotRules.js`, `model/iotRuleSet.js` e `test/iotRules.test.js` (5 testes unitários).
+
+**Painel de teste:** "Teste regras · Sala do PAVAP", com os dispositivos simulados do teste 18 (as regras modelo do 18 foram retiradas). O simulador é o `18-simulador.mjs`. O teste no navegador é o `20-navegador.mjs <email> <pasta> responsavel|equipe`. Para remover: `node 20-widget-regras.mjs --limpar`.
+
+| ID | Caso | Resultado |
+| --- | --- | --- |
+| W1 | Responsável abre o painel | ✅ vê os dois equipamentos, sem "Somente leitura" |
+| W2 | Retorno do lado errado (acima de 60, voltar abaixo de 70) | ✅ recusado: "o retorno precisa ser menor que 60 (por exemplo, 55)" |
+| W3 | Prévia | ✅ "Se humidity (…) ficar acima de 60, ligar este equipamento. Desligar quando ficar abaixo de 55." |
+| W4–W6 | Salva regras no ar-condicionado e no umidificador (duas no mesmo equipamento) | ✅ um campo calculado por equipamento, combinando as regras em ordem |
+| W7–W9 | Pausar, retomar e excluir (com confirmação) | ✅ |
+| W10 | Equipe abre o painel | ✅ vê as regras com "Somente leitura" e sem botões |
+| W11 | Equipe chama a API direto do navegador, com o próprio token | ✅ 403 |
+
+A sala simulada reagiu às regras: com 69 %, o ar-condicionado ligou e o umidificador desligou. A rota pública (`IO_PUBLIC_URL/iot/rules`, pelo Tailscale) respondeu 401 sem token e o preflight de CORS respondeu 204, então o widget funciona aberto pelo Tailscale.
+
+### Widget "Objetivos do ambiente" (`21-widget-objetivos.mjs`, 2026-11-07): 10 PASS no navegador
+
+É a segunda versão do plugin, feita depois de Dalian achar o widget de regras "muito especializado". Em vez de "se X > Y, ligar; voltar quando…", o pesquisador diz **o que quer manter** e **quais equipamentos ajudam**. Exemplo: "umidade da sala entre 40 e 60 %", com o umidificador ↑ aumenta e o ar-condicionado ↓ diminui.
+- O equipamento que aumenta liga abaixo do mínimo, e o que diminui liga acima do máximo. Os dois desligam no meio da faixa, então nunca brigam.
+- Por dentro, o objetivo vira as mesmas regras (`goalId`) e o mesmo campo calculado por equipamento.
+- Código: `model/iotGoal.js` e rotas `/iot/goals` em `business/iotRules.js`. Os testes unitários de `iotRules.test.js` passaram de 5 para 8.
+
+**O cartão mostra:**
+- o valor atual em destaque;
+- uma barra com a faixa desejada e a posição atual;
+- a situação: dentro da faixa, abaixo ou acima;
+- cada equipamento com uma frase e o estado confirmado (ligado ou desligado);
+- o botão "Automático" (desligado, os equipamentos ficam no manual).
+
+O editor ocupa o widget inteiro: grandeza com nome amigável, faixa com barra de prévia, equipamentos com "↑ aumenta / ↓ diminui" (sugerido pelo nome) e frases de prévia ao vivo. O painel é "Teste objetivos · Sala do PAVAP" e substituiu o do teste 20. O teste no navegador é o `21-navegador.mjs <email> <pasta> responsavel|equipe`.
+
+| ID | Caso | Resultado |
+| --- | --- | --- |
+| O1–O2 | Cartão do objetivo; editor de "Novo objetivo" com as três perguntas | ✅ |
+| O3–O4 | Editar a faixa para 45–65: prévia ao vivo e gravação | ✅ |
+| O5–O6 | Desligar e religar "Automático" | ✅ |
+| O7 | Voltar para 40–60 | ✅ |
+| O8–O9 | Equipe: "Somente leitura", sem editar, excluir ou criar; "Automático" desabilitado | ✅ |
+| O10 | Equipe chama a API direto, com o próprio token | ✅ 403 |
+
 ### Cadastro só no próprio laboratório (`14-cadastro-por-laboratorio.mjs`, 2026-11-02): 14 PASS
 
 Usuário da unidade (`CUSTOMER_USER`) com o papel de grupo "Edição" (`READ`, atributos, telemetria, `CREATE`, `WRITE`, `WRITE_ATTRIBUTES`, `DELETE`, `READ_CREDENTIALS`) sobre o grupo do laboratório L1, mais o genérico "Interface" com `DEVICE_PROFILE: READ`. Central de desenvolvimento, entidades de teste apagadas no fim.
@@ -213,6 +339,47 @@ Usuário da unidade (`CUSTOMER_USER`) com o papel de grupo "Edição" (`READ`, a
 | N3 | Cria sem indicar o grupo | ✅ 403 |
 | N4, N5 | Põe o próprio sensor na L2; traz um sensor da L2 para a L1 | ✅ 403 (`ADD_TO_GROUP`) |
 | N6–N8 | Lê token, edita ou exclui sensor da L2 | ✅ 403 |
+
+### MCP por perfil (`15-mcp-por-perfil.mjs`, 2026-11-04): 39 PASS, mais 3 casos restritos
+
+Pergunta da reunião de 03/11: dá para cada pessoa criar painéis e regras pelo MCP do ThingsBoard, com o próprio cliente de IA?
+
+**Cenário:**
+- Central de desenvolvimento (4.4.0, sem chave), modelo de laboratórios.
+- `thingsboard/mcp` **2.1.0**, a versão mais recente publicada (26/02/2026), por STDIO.
+- Para cada pessoa, o tenant gera uma API key de 1 h. O MCP sobe com ela, e as mesmas operações são repetidas pela REST, com a mesma chave, para o que o MCP não cobre.
+- Perfis da Gado de Corte:
+  - gestor: `gestor.gadodecorte`;
+  - Responsável pelo PAVAP: conta temporária só no grupo "PAVAP · Responsáveis", porque a conta real `fdsfds` nunca foi ativada;
+  - Equipe do PAVAP: `maxwell`.
+- Tudo o que foi criado foi apagado no fim, inclusive as chaves.
+
+| ID | Operação | Gestor | Responsável | Equipe |
+| --- | --- | --- | --- | --- |
+| M0 | Ferramentas oferecidas | 124, **nenhuma de painel, rule chain, campo calculado ou RPC** | igual | igual |
+| M1 | `getUserDevices` | 7 (a unidade) | 5 (PAVAP) | 5 (PAVAP) |
+| M2 | `getTenantDevices` | 403 | 403 | 403 |
+| M3–M5 | Último valor: PAVAP / Campo experimental / Pantanal | ✅ / ✅ / 403 | ✅ / 403 / 403 | ✅ / 403 / 403 |
+| M6 | Caso de isolamento | ver `RESTRITO-isolamento.md` | | |
+| M7 | Token MQTT de sensor do PAVAP | 403 | ✅ | 403 |
+| M8 | Grava atributo em sensor do PAVAP | 403 | ✅ | 403 |
+| M9 | `createOrUpsertDevice` no grupo do PAVAP | 403 | **403** | 403 |
+| M9b | `saveDevice` com `entityGroupId` do PAVAP | 403 | ✅ | 403 |
+| M10 | `saveAlarm` | 403 | 403 | 403 |
+| M11 | `getCustomerUsers` da unidade | ✅ (5) | 403 | 403 |
+| R1 | REST: painéis visíveis | 1 | 1 | 1 |
+| R2 | REST: cria painel no grupo de painéis do PAVAP | 403 | ✅ | 403 |
+| R3 | REST: lista rule chains | 403 | 403 | 403 |
+| R4 | REST: cria campo calculado em sensor do PAVAP | 403 | 403 | 403 |
+| R5 | REST: RPC ao umidificador do PAVAP | 403 | 403 | 403 |
+| R6 | REST: gera a própria API key | 403 | 403 | 403 |
+
+**Achados:**
+1. **O MCP oficial não cria painéis nem regras.** A versão 2.1.0 cobre dispositivos, assets, alarmes, telemetria, relações, usuários, grupos e OTA. Dashboards, rule chains, campos calculados e RPC ficam de fora. Pela REST, com a mesma chave, o Responsável cria painel no grupo do laboratório (R2). Regras e RPC dão 403 a todos (R3–R5), como nos testes 09 e 13.
+2. **O MCP respeita o RBAC** nos casos M1–M5, M7, M8 e M9b. O M6 está no arquivo restrito.
+3. **A ferramenta "principal" de cadastro não serve a usuários de customer.** O `createOrUpsertDevice` consulta `/api/tenant/devices` antes de gravar e dá 403 até para o Responsável. É preciso orientar o cliente de IA a usar o `saveDevice` com `entityGroupId`. O `getUsers` também falha para usuários de customer, com 400 em `/api/users`.
+4. **Ninguém gera a própria API key** (R6: 403, `WRITE` em `USER`). A documentação pede o recurso `API Key` mais `Write` em `User`, e dar `Write` em `User` a pesquisadores abriria a edição de outras contas. O caminho é a plataforma gerar a chave de cada pessoa: o tenant pode gerá-la para usuários dos customers, com prazo, e ela é exibida uma única vez.
+5. **Conta nunca ativada não usa API key:** responde 401 "User account is not active". A chave só funciona depois de a pessoa ativar a conta.
 
 ### Regra de controle criada pelo pesquisador (`10-regra-hvac.mjs`, 2026-10-27): 7 PASS
 
@@ -304,9 +471,10 @@ A conta recriada nasce **sem senha**: até ser ativada pelo link de ativação, 
 1. **O Edge 4.4 atende ao requisito offline:** reinicia e processa regras sem servidor e não faz verificação de licença própria.
 2. **O servidor depende de internet:** verifica a licença a cada hora. Depois de 72 h sem conseguir, só a gestão trava.
 3. **O pesquisador não pode receber permissão de regras restrita ao projeto.** Um papel de regras dá acesso a todas as rule chains do tenant, inclusive à raiz.
-4. **Falta testar:** o bloqueio na prática do limite de 100 dispositivos (criar o 101º). O número de Edges do Free (1) e o Edge com chave de produção já foram testados em 24/10.
+4. **O MCP 2.1.0 não cria painéis nem regras.** A API key de cada pessoa precisa ser gerada pela plataforma (`15-mcp-por-perfil.mjs`).
+5. **Falta testar:** o bloqueio na prática do limite de 100 dispositivos (criar o 101º). O número de Edges do Free (1) e o Edge com chave de produção já foram testados em 24/10.
 
-Os resultados de isolamento entre projetos (`04-rbac.mjs` e `05-confirma-vazamento.mjs`) ficam fora deste repositório público até o relato ao fornecedor.
+Os resultados de isolamento entre projetos (`04-rbac.mjs`, `05-confirma-vazamento.mjs`, `08-historico-websocket.mjs` e `15-mcp-por-perfil.mjs`) ficam fora deste repositório público até o relato ao fornecedor.
 
 ## Encerrar o ambiente
 
