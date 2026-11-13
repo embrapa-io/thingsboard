@@ -310,4 +310,87 @@ docker compose run --rm -e UPGRADE_TB=true thingsboard
 docker compose up -d --wait
 ```
 
-Com chave de produção, defina `TB_LICENSE_SECRET` no `.env` antes de subir; sem ela, o servidor só sobe em modo de não produção.
+Com chave de produção, defina `TB_LICENSE_SECRET` no `.env` antes de subir; sem ela, o servidor só sobe em modo de não produção. O passo a passo está em "Aplicar a chave de licença".
+
+## Aplicar a chave de licença (plano Free)
+
+Sem chave, a 4.4 roda em modo de não produção. Nele não há limites, mas a interface mostra a marca d'água _development mode_, e o servidor desliga ao somar **30 dias ligado**. O tempo parado não conta e fica em `tb_cluster.non_production_uptime_ms`. Com a chave, a instância passa a rodar em modo de produção, sem a marca d'água e com os limites do plano.
+
+**Limites da chave Free**, lidos em `planData`/`licenseUsageInfo` no teste de 24/10/2026 (`avaliacao/README.md`):
+
+| Limite | Valor |
+|---|---|
+| `maxDevices` | 100 |
+| `maxAssets` | 100 |
+| `maxEdges` | **1** |
+| `maxAgents` | 1 |
+| `maxInstances` (instâncias de produção) | **1** |
+
+Acima do limite, a **criação** é recusada (403 "Maximum allowed devices/edges limit reached!"). O que já existe continua funcionando. A chave não traz limite de usuários.
+
+### Antes de começar
+
+- **A chave é uma só por organização.** O License Portal emite uma única chave gratuita para a Embrapa inteira, e ela tem **uma única vaga de instância**. Quem gera a chave declara ter poder para vincular a organização, então a decisão de gerá-la é de quem responde pelo projeto, não do desenvolvedor.
+- **Veja onde a chave está ativa.** Se ela já estiver em outra instância, libere essa instância no Portal antes. Caso contrário, a ativação nova falha com `ACTIVE_INSTANCES_CAPACITY_EXCEEDED(104)`, e o servidor passa a responder 423 `LICENSE_REQUIRED`.
+- **Nunca commite a chave.** Ela fica só no `.env`, que é ignorado pelo Git.
+
+### Passo a passo
+
+1. **Faça backup do banco.** A ativação não mexe nos dados, mas o backup permite voltar atrás:
+
+   ```sh
+   docker compose exec -T db pg_dump -U thingsboard thingsboard \
+     | gzip > backup/thingsboard-$(date +%Y%m%d-%H%M%S)-antes-licenca.sql.gz
+   ```
+
+2. **Preencha o `.env`:**
+
+   ```
+   TB_LICENSE_SECRET=<chave do License Portal>
+   TB_NON_PRODUCTION_USE=false
+   ```
+
+3. **No desenvolvimento, ajuste o `docker-compose.override.yml`.** Ele fixa `NON_PRODUCTION_USE: "true"`, o que passa por cima do `.env`. A chave tem prioridade sobre essa variável (teste de 24/10), mas troque o valor para `"false"` para que o arquivo mostre o modo real. Com a chave, o `restart: "no"` deixa de ser necessário, porque ele só existe para não gastar os 30 dias.
+
+4. **Confirme que a ativação vai ficar no volume.** O `docker-compose.yml` já define `TB_LICENSE_INSTANCE_DATA_FILE=/data/instance-license.data`, e `/data` é o volume `tb_data` (nome externo em `VOLUME_THINGSBOARD` no `.env`). **Não remova essa variável.** Sem ela, o arquivo fica dentro do contêiner, e o próximo `up` que recriar o contêiner (troca de imagem, porta ou variável) gera outra instância e trava na vaga única.
+
+5. **Recrie o servidor.** Variável nova exige recriar o contêiner, e não só reiniciá-lo:
+
+   ```sh
+   docker compose up -d --wait thingsboard
+   ```
+
+   O servidor ativa a instância online no License Portal. A máquina precisa de acesso a `license.thingsboard.io`.
+
+6. **Verifique:**
+   - a marca d'água sumiu da interface;
+   - o arquivo de ativação existe no volume:
+
+     ```sh
+     docker compose exec thingsboard ls -l /data/instance-license.data
+     ```
+
+   - os limites e o uso aparecem para o sysadmin em `GET /api/admin/licenseUsageInfo`:
+
+     ```sh
+     TOKEN=$(curl -s -X POST <URL>/api/auth/login -H 'Content-Type: application/json' \
+       -d '{"username":"sysadmin@thingsboard.org","password":"<senha>"}' \
+       | sed -E 's/.*"token":"([^"]+)".*/\1/')
+     curl -s <URL>/api/admin/licenseUsageInfo -H "X-Authorization: Bearer $TOKEN"
+     ```
+
+     `<URL>` é `http://localhost:9095` no desenvolvimento, e `https://iot.embrapa.io` em produção.
+
+### Depois de ativar
+
+- **Verificação online:** o servidor consulta `license.thingsboard.io` a cada hora. Pelo código (`client-1.3.3.jar`), se ficar 72 h sem conseguir, **só a gestão trava** ("management plane locked"), e a telemetria segue. Os Termos do Portal falam em 48 h e "the Software stops". Considere o prazo menor.
+- **Edge:** o Edge 4.4 não verifica a licença por conta própria. Ele usa a do servidor (`licenseVersion: 2`) e processa as regras mesmo sem servidor.
+- **Trocar de máquina ou de instância:** libere a instância atual no Portal antes de ativar a chave em outro lugar. A ativação antiga para de funcionar.
+- **Upgrade de imagem:** com o arquivo de ativação no volume, o upgrade mantém a ativação. Confira o arquivo depois de cada upgrade.
+
+### Registro das ativações
+
+| Data | Ambiente | Observações |
+|---|---|---|
+| 24/10/2026 | `thingsboard-4.4-test`, ambiente isolado | Primeira ativação, em que os limites foram lidos. Ao recriar o contêiner, a ativação se perdeu, porque o arquivo ainda estava fora do volume, e foi preciso liberar a instância no Portal. |
+| 07/11/2026 | Central de desenvolvimento, rodando da cópia restaurada (`compose.thingsboard.restaurado.json`) | Mesma chave, com `NON_PRODUCTION_USE=false`. Instância `c6iDGvzfIem59iQiXgZc`, gravada em `/data/instance-license.data`. Uso na ativação: 12 dispositivos, 7 assets e 1 Edge. Backup anterior: `backup/thingsboard-20261107-101921-antes-licenca-free.sql.gz`. Desde então o `thingsboard-4.4-test` não pode mais ser ligado com a chave. O `.env` deste diretório continua com `TB_LICENSE_SECRET` vazio. |
