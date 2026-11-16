@@ -7,7 +7,17 @@
 # máquina de desenvolvimento não há esse nginx e o Docker Desktop não tem
 # journald. Aqui a Central atende MQTTS com os certificados de desenvolvimento
 # (gere com generate-dev-mqtt-certs.*), só na rede Docker: o simulador de
-# devices conecta em thingsboard:8883. Nenhuma porta nova é publicada no host.
+# devices conecta em thingsboard:8883.
+#
+# Entrada web em desenvolvimento: as pessoas entram direto no ThingsBoard, com
+# login e RBAC nativos, em http://127.0.0.1:9095. O nginx completo e o
+# auth-gateway ficam no profile "nginx-completo" e não sobem por padrão. No
+# lugar deles, o telemetry-proxy atende só /telemetry em PORT_WEB e com o nome
+# tb-web: é por ele que passam a chave da aba Aplicações do Embrapa I/O e a
+# fonte de dados do Grafana. Para voltar ao nginx completo:
+#   docker compose stop telemetry-proxy
+#   docker compose --profile nginx-completo up -d nginx auth-gateway
+# (os dois usam a mesma porta e o mesmo nome tb-web; não ligue os dois juntos).
 services:
   thingsboard:
     environment:
@@ -20,9 +30,48 @@ services:
       MQTT_SSL_PEM_CERT: /etc/thingsboard/certs/server.pem
       MQTT_SSL_PEM_KEY: /etc/thingsboard/certs/server_key.pem
       # Sem chave do License Portal: modo de não produção (30 dias de uso acumulado).
+      # Com TB_LICENSE_SECRET no .env, troque para "false" (ver README, licença).
       NON_PRODUCTION_USE: "true"
+    # UI/REST direto no loopback, com login e RBAC nativos do ThingsBoard.
+    ports:
+      - "127.0.0.1:9095:8080"
     volumes:
       - ./certs/server.pem:/etc/thingsboard/certs/server.pem:ro
       - ./certs/server_key.pem:/etc/thingsboard/certs/server_key.pem:ro
     logging:
       driver: json-file
+
+  nginx:
+    profiles: [nginx-completo]
+
+  auth-gateway:
+    profiles: [nginx-completo]
+
+  telemetry-proxy:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      thingsboard:
+        condition: service_started
+      telemetry-gateway:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${PORT_WEB}:80"
+    volumes:
+      - ./nginx/telemetry-proxy.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      io:
+        aliases:
+          - tb-web
+    healthcheck:
+      test: [ "CMD", "wget", "-qO-", "http://127.0.0.1/health" ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  # No docker-compose.yml o Grafana espera o nginx; aqui, o telemetry-proxy.
+  grafana:
+    depends_on: !override
+      telemetry-proxy:
+        condition: service_healthy

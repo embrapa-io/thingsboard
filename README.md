@@ -149,6 +149,26 @@ simulador de devices publica; o PROXY protocol fica desligado, o log vai para
 `json-file` e o servidor sobe em modo de não produção. Em produção, não crie o
 `docker-compose.override.yml`.
 
+A entrada web também muda em desenvolvimento. As pessoas entram direto no
+ThingsBoard, com login e RBAC nativos, em `http://127.0.0.1:9095`. O `nginx` e o
+`auth-gateway` ficam no profile `nginx-completo` e não sobem por padrão. No lugar
+deles sobe o `telemetry-proxy` (`nginx/telemetry-proxy.conf`), que atende só as
+rotas `/telemetry` em `127.0.0.1:${PORT_WEB}` e responde pelo nome `tb-web` na
+rede `io_thingsboard`. Sem ele, param a chave da aba Aplicações
+(`TELEMETRY_PUBLIC_URL`) e os dados dos painéis do Grafana, cujo data source
+aponta para `http://tb-web/telemetry`. As rotas são as mesmas de
+`conf.d/thingsboard.conf`: ao mudar uma, mude a outra. A única diferença é o
+limite de requisições, contado por `Authorization` e `X-API-Key` juntos (no
+`nginx.conf` de produção, só por `Authorization`).
+
+Para voltar ao nginx completo em desenvolvimento (os dois usam a mesma porta e o
+mesmo nome `tb-web`, então não ligue os dois juntos):
+
+```sh
+docker compose stop telemetry-proxy
+docker compose --profile nginx-completo up -d nginx auth-gateway
+```
+
 ## Certificados MQTTS para desenvolvimento
 
 Usados pela Central só em desenvolvimento (via `docker-compose.override.yml`) e
