@@ -138,6 +138,8 @@ try {
   // Filtros em cascata
   const locDisabled = await js(`[...document.querySelectorAll('.dash-filters .v-select')].pop().classList.contains('v-input--is-disabled')`)
   check('P2', 'Localidade desabilitada até escolher a unidade', locDisabled)
+  const scroll = await js(`(() => { const w = document.querySelector('.dash-table .v-data-table__wrapper'); const th = document.querySelector('.dash-table thead th'); return getComputedStyle(w).overflowY + ' / ' + getComputedStyle(w).maxHeight + ' / ' + getComputedStyle(th).position + ' / ' + w.clientHeight + 'px de ' + w.scrollHeight + 'px' })()`)
+  check('P4', 'tabela de Painéis rola por dentro com o cabeçalho fixo, como Vinculados', /^auto \/ \d+px \/ sticky/.test(scroll), scroll)
 
   // Ordenação pelas colunas, como em Vinculados
   const titles = () => text('.dash-table tbody .dash-name')
