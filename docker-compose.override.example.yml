@@ -14,7 +14,7 @@
 # auth-gateway ficam no profile "nginx-completo" e não sobem por padrão. No
 # lugar deles, o telemetry-proxy atende só /telemetry em PORT_WEB e com o nome
 # tb-web: é por ele que passam a chave da aba Aplicações do Embrapa I/O e a
-# fonte de dados do Grafana. Para voltar ao nginx completo:
+# consulta de telemetria do backend. Para voltar ao nginx completo:
 #   docker compose stop telemetry-proxy
 #   docker compose --profile nginx-completo up -d nginx auth-gateway
 # (os dois usam a mesma porta e o mesmo nome tb-web; não ligue os dois juntos).
@@ -69,9 +69,3 @@ services:
       timeout: 3s
       retries: 5
       start_period: 5s
-
-  # No docker-compose.yml o Grafana espera o nginx; aqui, o telemetry-proxy.
-  grafana:
-    depends_on: !override
-      telemetry-proxy:
-        condition: service_healthy

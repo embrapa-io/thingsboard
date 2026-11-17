@@ -9,7 +9,7 @@ tb_cluster.non_production_uptime_ms (a cada 5 min; intervalos maiores que
 10 min, como o tempo parado, não contam) e se encerra ao chegar a 30 dias.
 Este script só LÊ esse contador, nunca o altera.
 
-Só o serviço `thingsboard` consome o limite; banco, Kafka, Nginx e Grafana podem
+Só o serviço `thingsboard` consome o limite; banco, Kafka e Nginx podem
 ficar no ar. Cada `ligar` abre uma sessão com prazo, e a tarefa agendada
 (`instalar`) para o servidor quando o prazo vence.
 

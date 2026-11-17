@@ -191,8 +191,8 @@ services:
       - ./nginx/static:/usr/share/nginx/html/embrapa:ro
     networks:
       io:
-        # Nome inequívoco na rede compartilhada, usado pelo data source do
-        # Grafana para chegar à camada de telemetria.
+        # Nome inequívoco na rede compartilhada, usado pelo backend do Embrapa I/O
+        # (TELEMETRY_INTERNAL_URL) para chegar à camada de telemetria.
         aliases:
           - tb-web
     healthcheck:
@@ -201,45 +201,6 @@ services:
       timeout: 3s
       retries: 10
       start_period: 5s
-
-  grafana:
-    image: grafana/grafana:${GRAFANA_VERSION}
-    restart: unless-stopped
-    depends_on:
-      nginx:
-        condition: service_healthy
-    environment:
-      GF_SERVER_ROOT_URL: "${GRAFANA_ROOT_URL}"
-      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
-      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER}"
-      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD}"
-      GF_SECURITY_ALLOW_EMBEDDING: "true"
-      GF_USERS_AUTO_ASSIGN_ORG_ROLE: "None"
-      # Login provisório pelo Embrapa I/O (auth proxy) até a fase do OAuth
-      # GitLab. O header só é aceito de quem está na rede dedicada ao proxy.
-      GF_AUTH_PROXY_ENABLED: "true"
-      GF_AUTH_PROXY_HEADER_NAME: "X-WEBAUTH-USER"
-      GF_AUTH_PROXY_HEADER_PROPERTY: "username"
-      GF_AUTH_PROXY_AUTO_SIGN_UP: "true"
-      GF_AUTH_PROXY_WHITELIST: "${GRAFANA_AUTH_PROXY_WHITELIST}"
-      GF_PLUGINS_PREINSTALL_SYNC: "yesoreyeram-infinity-datasource@${GRAFANA_INFINITY_VERSION}"
-      GF_ANALYTICS_REPORTING_ENABLED: "false"
-      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
-    volumes:
-      - grafana_data:/var/lib/grafana
-    networks:
-      io:
-        aliases:
-          - grafana-iot
-      grafana_proxy:
-        aliases:
-          - grafana-iot
-    healthcheck:
-      test: [ "CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health || exit 1" ]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
 
   pgadmin:
     image: dpage/pgadmin4:9
@@ -287,13 +248,6 @@ networks:
     name: io_thingsboard
     external: true
 
-  # Rede exclusiva entre o NGINX do dashboard do Embrapa I/O e o Grafana. O
-  # whitelist do auth proxy aponta para a sub-rede dela.
-  # docker network create --driver=bridge --subnet=172.30.67.0/24 --gateway=172.30.67.1 io_grafana
-  grafana_proxy:
-    name: ${GRAFANA_PROXY_NETWORK}
-    external: true
-
 volumes:
   kafka_data:
     name: ${VOLUME_KAFKA}
@@ -317,8 +271,4 @@ volumes:
 
   backup:
     name: ${VOLUME_BACKUP}
-    external: true
-
-  grafana_data:
-    name: ${VOLUME_GRAFANA}
     external: true

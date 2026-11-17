@@ -15,7 +15,6 @@ Imagens fixadas na **macro-versão** de cada componente, recebendo apenas _patch
 | Apache Kafka | `bitnamilegacy/kafka` | `4.0` |
 | pgAdmin 4 | `dpage/pgadmin4` | `9` |
 | Backup do Postgres | `prodrigestivill/postgres-backup-local` | `17` |
-| Grafana IoT | `grafana/grafana` (+ plugin Infinity) | `12.4.11` (Infinity `4.1.1`) |
 
 > **Licença.** A partir da 4.4 o ThingsBoard é distribuído sob a _Business Source License_ 1.1. O uso gratuito em produção exige chave emitida pelo License Portal (`TB_LICENSE_SECRET`), com checagem _online_ de hora em hora, e a marca ThingsBoard visível; o plano gratuito comercial vai até 100 dispositivos, 1 instância e 1 Edge. Sem chave, o servidor só sobe em modo de não produção (`TB_NON_PRODUCTION_USE=true`), que desliga após 30 dias de uso acumulado. A ativação fica em `/data/instance-license.data`, no volume. A linha 4.3 (Apache 2.0), base da avaliação anterior, está congelada na tag `iot-tb4.3.0` e no branch `iot-tb4.3`; o _upgrade_ da 4.3 para a 4.4 converte o banco e não tem volta, então faça _backup_ antes (ver "Update").
 
@@ -77,28 +76,23 @@ de login. A customização está em
 `nginx/static/embrapa-access-denied.js` e só atua no diálogo padrão de acesso
 proibido; os demais diálogos não são modificados.
 
-## Camada de telemetria e Grafana IoT
+## Camada de telemetria
 
 A telemetria é lida por `/telemetry/`, sempre via API do ThingsBoard. O
 `telemetry-gateway` valida a credencial e o NGINX repassa ao ThingsBoard somente
 a consulta normalizada por ele, com a credencial de serviço `TB_TELEMETRY_TOKEN`,
 que nunca sai da stack.
 
-Há duas credenciais:
-
-- **JWT de projeto**: assinado com `TELEMETRY_JWT_SECRET` pelo autômato `iot` do
-  Embrapa I/O e gravado no data source Infinity da organização do projeto no
-  Grafana. Lista os dispositivos vinculados; o caminho leva o ID:
-  `/telemetry/DEVICE/{id}/...`.
-- **chave de aplicação** (`X-API-Key: ioa_...`): criada na aba Aplicações do
+A credencial é a **chave de aplicação** (`X-API-Key: ioa_...`): criada na aba Aplicações do
   diálogo de dispositivos IoT. Não expira; pode ser trocada ou revogada, com efeito
   imediato. O gateway confere a chave no backend a cada consulta
   (`/iot/apps/internal/authorize`, com `TELEMETRY_JWT_SECRET` no cabeçalho
   `X-Telemetry-Gateway`) e só libera os dispositivos escolhidos que seguem
   vinculados ao projeto. `GET /telemetry/devices` lista esses dispositivos.
 
-O JWT de dispositivo (antiga aba Consumo) não é mais emitido; o gateway ainda
-aceita os já emitidos até expirarem.
+O gateway também aceita o JWT de dispositivo (`scope: device`, assinado com
+`TELEMETRY_JWT_SECRET`). O JWT de projeto, que era do Grafana IoT, foi retirado
+junto com ele e é recusado. Os painéis agora ficam no próprio ThingsBoard.
 
 Somente leitura de telemetria é aceita (`values/timeseries` e
 `keys/timeseries`, apenas GET). Períodos maiores que `TELEMETRY_MAX_RANGE_DAYS`
@@ -115,14 +109,6 @@ um usuário do tenant cujo único papel (`Serviço · Telemetria`) lê dispositi
 telemetria em todas as unidades: não lê credenciais MQTT, não grava telemetria, não
 manda RPC e não vê usuários nem rule chains. `rbac/servico-telemetria.mjs` cria a
 conta e grava a chave no `.env`; `rbac/conferir-telemetria.mjs` confere as permissões.
-
-O Grafana IoT roda nesta stack (`grafana`), com o plugin Infinity
-pré-instalado. Cada projeto do Embrapa I/O tem uma organização própria: no
-Grafana OSS qualquer membro consulta qualquer data source da organização, então
-pastas e equipes não isolam dados. Até a fase do OAuth GitLab, o login é feito
-pelo Embrapa I/O via auth proxy; o header de usuário só é aceito da rede
-`GRAFANA_PROXY_NETWORK` (sub-rede em `GRAFANA_AUTH_PROXY_WHITELIST`), que liga
-apenas o NGINX do dashboard ao Grafana. O `bootstrap.sh` cria essa rede.
 
 Testes da camada:
 
@@ -155,8 +141,7 @@ ThingsBoard, com login e RBAC nativos, em `http://127.0.0.1:9095`. O `nginx` e o
 deles sobe o `telemetry-proxy` (`nginx/telemetry-proxy.conf`), que atende só as
 rotas `/telemetry` em `127.0.0.1:${PORT_WEB}` e responde pelo nome `tb-web` na
 rede `io_thingsboard`. Sem ele, param a chave da aba Aplicações
-(`TELEMETRY_PUBLIC_URL`) e os dados dos painéis do Grafana, cujo data source
-aponta para `http://tb-web/telemetry`. As rotas são as mesmas de
+(`TELEMETRY_PUBLIC_URL`) e as consultas do backend em `http://tb-web/telemetry`. As rotas são as mesmas de
 `conf.d/thingsboard.conf`: ao mudar uma, mude a outra. A única diferença é o
 limite de requisições, contado por `Authorization` e `X-API-Key` juntos (no
 `nginx.conf` de produção, só por `Authorization`).

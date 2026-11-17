@@ -20,7 +20,6 @@ const token = (claims, { secret = SECRET, alg = 'HS256' } = {}) => {
   return head + '.' + body + '.' + signature
 }
 
-const projectToken = (devices = [DEVICE_A, DEVICE_B], extra = {}) => token({ scope: 'project', sub: 'teste1', devices, ...extra })
 const deviceToken = (device = DEVICE_C, extra = {}) => token({ scope: 'device', sub: device, project: 'teste1', ...extra })
 
 const start = async (env = {}) => {
@@ -46,13 +45,13 @@ const gateway = async t => {
   return baseUrl
 }
 
-test('project token reaches a listed device and gets a normalized query', async t => {
+test('device token with its id in the path gets a normalized query', async t => {
   const baseUrl = await gateway(t)
   const start = NOW - 24 * 3600 * 1000
-  const result = await authorize(baseUrl, `/telemetry/DEVICE/${DEVICE_A}/values/timeseries?keys=temperature,humidity&startTs=${start}&endTs=${NOW}&agg=avg&interval=60000`, projectToken())
+  const result = await authorize(baseUrl, `/telemetry/DEVICE/${DEVICE_C}/values/timeseries?keys=temperature,humidity&startTs=${start}&endTs=${NOW}&agg=avg&interval=60000`, deviceToken())
 
   assert.equal(result.status, 204)
-  assert.equal(result.headers.get('x-telemetry-path'), `DEVICE/${DEVICE_A}/values/timeseries`)
+  assert.equal(result.headers.get('x-telemetry-path'), `DEVICE/${DEVICE_C}/values/timeseries`)
   assert.equal(result.headers.get('x-telemetry-authorization'), 'ApiKey service-key')
   const query = new URLSearchParams(result.headers.get('x-telemetry-query'))
   assert.equal(query.get('keys'), 'temperature,humidity')
@@ -62,17 +61,12 @@ test('project token reaches a listed device and gets a normalized query', async 
   assert.equal(query.get('interval'), '172800')
 })
 
-test('project token cannot reach a device outside its list', async t => {
+// O escopo "project" era do Grafana IoT, retirado; um token antigo desse tipo é recusado.
+test('project tokens are no longer accepted', async t => {
   const baseUrl = await gateway(t)
-  const result = await authorize(baseUrl, `/telemetry/DEVICE/${DEVICE_C}/values/timeseries?keys=temperature`, projectToken())
-  assert.equal(result.status, 403)
+  const result = await authorize(baseUrl, `/telemetry/DEVICE/${DEVICE_A}/values/timeseries?keys=temperature`, token({ scope: 'project', sub: 'teste1', devices: [DEVICE_A, DEVICE_B] }))
+  assert.equal(result.status, 401)
   assert.equal(result.headers.get('x-telemetry-authorization'), null)
-})
-
-test('project token requires the device id in the path', async t => {
-  const baseUrl = await gateway(t)
-  const result = await authorize(baseUrl, '/telemetry/values/timeseries?keys=temperature', projectToken())
-  assert.equal(result.status, 403)
 })
 
 test('device token uses its own subject when the path has no device', async t => {
@@ -87,6 +81,7 @@ test('device token cannot reach another device', async t => {
   const baseUrl = await gateway(t)
   const result = await authorize(baseUrl, `/telemetry/DEVICE/${DEVICE_A}/keys/timeseries`, deviceToken())
   assert.equal(result.status, 403)
+  assert.equal(result.headers.get('x-telemetry-authorization'), null)
 })
 
 test('latest values pass without a period', async t => {

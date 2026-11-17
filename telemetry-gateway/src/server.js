@@ -7,7 +7,6 @@ const DAY_MS = 24 * 60 * 60 * 1000
 const DEFAULT_MAX_RANGE_DAYS = 31
 const DEFAULT_MAX_POINTS = 500
 const MIN_SECRET_LENGTH = 32
-const MAX_PROJECT_DEVICES = 1000
 const MAX_KEYS = 50
 
 const UUID = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
@@ -110,24 +109,13 @@ const verifyToken = (token, { secret, issuer, audience, now }) => {
     return { scope: 'device', subject: claims.sub, devices: new Set([claims.sub.toLowerCase()]) }
   }
 
-  if (claims.scope === 'project') {
-    if (typeof claims.sub !== 'string' || !claims.sub) deny(401, 'invalid project subject')
-    if (!Array.isArray(claims.devices) || claims.devices.length > MAX_PROJECT_DEVICES) deny(401, 'invalid device list')
-    const devices = new Set()
-    for (const device of claims.devices) {
-      if (typeof device !== 'string' || !uuidPattern.test(device)) deny(401, 'invalid device list')
-      devices.add(device.toLowerCase())
-    }
-    return { scope: 'project', subject: claims.sub, devices }
-  }
-
   return deny(401, 'invalid scope')
 }
 
 const resolveTarget = (pathname, grant) => {
   const own = pathname.match(ownPathPattern)
   if (own) {
-    if (grant.scope !== 'device') deny(403, 'device id required for project tokens')
+    if (grant.scope !== 'device') deny(403, 'device id required for app keys')
     return { deviceId: grant.subject.toLowerCase(), resource: own[1] }
   }
 
