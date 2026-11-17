@@ -2,3 +2,6 @@
 certs/*
 !certs/README.md
 docker-compose.override.yml
+
+# Prints e JSON gerados pelos scripts de avaliacao (nao versionar)
+avaliacao/resultados/
