@@ -121,6 +121,41 @@ try {
   await sleep(1000)
   check('V7', 'diálogo Dispositivos IoT continua aberto', await js(`!!document.querySelector('.iot-panel') && document.querySelector('.iot-panel').offsetParent !== null`))
 
+  // Disponíveis: escolhe a primeira localidade com dispositivos para vincular
+  await click('.iot-tabs .v-tab', 'Disponíveis')
+  await sleep(1500)
+  const picked = await js(`(async () => {
+    const walk = vm => typeof vm.handleAssetChange === 'function' ? vm : vm.$children.map(walk).find(Boolean)
+    const iot = walk(document.querySelector('#app').__vue__)
+    if (!iot) return 'sem ProjectIot'
+    for (let t = 0; t < 30 && iot.loadingAssets; t++) await new Promise(r => setTimeout(r, 300))
+    for (const asset of iot.assetOptions) {
+      iot.handleAssetChange(asset.id)
+      for (let t = 0; t < 40 && (iot.loadingAvailable || !iot.available.length); t++) { await new Promise(r => setTimeout(r, 300)); if (!iot.loadingAvailable && t > 5) break }
+      if (iot.available.length) return (asset.label || asset.name) + ': ' + iot.available.length + ' dispositivos'
+    }
+    return 'nenhuma localidade com dispositivos disponíveis (' + iot.assetOptions.length + ' localidades)'
+  })()`)
+  console.log('      Disponíveis: ' + picked)
+  await sleep(800)
+  const availableRows = (await text('.available-table tbody .device-title')).length
+  if (availableRows) {
+    const sortHeads = await text('.available-table th .sort-button')
+    check('D1', 'Disponíveis com colunas ordenáveis', sortHeads.length === 3, sortHeads.join(' / '))
+    const names = () => text('.available-table tbody .device-title')
+    const isSortedNames = (list, dir = 1) => list.every((v, i) => i === 0 || dir * list[i - 1].localeCompare(v, 'pt-BR', { sensitivity: 'base' }) <= 0)
+    check('D2', 'Disponíveis em ordem alfabética por padrão', isSortedNames(await names()), (await names()).length + ' linhas')
+    await click('.available-table th .sort-button', 'Dispositivo'); await sleep(400)
+    check('D3', 'clicar em "Dispositivo" inverte a ordem', isSortedNames(await names(), -1))
+    await click('.available-table th .sort-button', 'Situação'); await sleep(400)
+    const states = await text('.available-table tbody .state-pill')
+    const rank = { Ativo: 0, Offline: 1, 'Não iniciado': 2 }
+    check('D4', 'clicar em "Situação" põe os ativos primeiro', states.every((s, i) => i === 0 || rank[states[i - 1]] <= rank[s]), [...new Set(states)].join(' → '))
+    const availableScroll = await js(`(() => { const w = document.querySelector('.available-table .v-data-table__wrapper'); const th = document.querySelector('.available-table thead th'); return getComputedStyle(w).overflowY + ' / ' + getComputedStyle(w).maxHeight + ' / ' + getComputedStyle(th).position + ' / ' + w.clientHeight + 'px de ' + w.scrollHeight + 'px' })()`)
+    check('D5', 'Disponíveis rola por dentro com o cabeçalho fixo', /^auto \/ \d+px \/ sticky/.test(availableScroll), availableScroll)
+    await shot('disponiveis')
+  }
+
   // Painéis
   await click('.iot-tabs .v-tab', 'Painéis')
   await waitFor(`!!document.querySelector('.iot-dashboards') && !document.querySelector('.iot-dashboards .v-progress-linear')`)
