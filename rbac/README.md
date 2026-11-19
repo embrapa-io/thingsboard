@@ -119,6 +119,15 @@ migrados e as 7 `AccessibleBy`. O laboratório de cada dispositivo vem só do gr
 Conferência depois: o backend lista os 7 laboratórios. fdsfds vê os 6 sensores do PAVAP. O
 gestor da Gado de Corte vê os 10 sensores da unidade. `testar.mjs` passou com 26 de 26.
 
+## Piloto de Relatórios (2026-11-19)
+
+Papel genérico `Relatórios` (Report Template: ler/criar/alterar/apagar; Report: ler/criar/apagar; Job: ler/criar;
+Scheduler Event: ler/criar/alterar/apagar), atribuído **só** ao grupo "Campo experimental Fazenda Nhumirim – Embrapa
+Pantanal · Responsáveis". Com ele, o Responsável cria modelos CSV/PDF, gera e agenda relatórios, sempre com os dados
+que ele enxerga. Criado por `avaliacao/32-relatorios-piloto.mjs`; para tirar a atribuição:
+`node avaliacao/32-relatorios-piloto.mjs --desfazer-papel`. Estender a outras localidades está para decidir: o
+papel genérico vale para a unidade inteira, e Responsáveis de laboratórios diferentes veriam os modelos uns dos outros.
+
 ## Integração com o Embrapa I/O
 
 - O backend calcula o escopo pelo que a própria pessoa vê (`/api/user/devices` com o token
