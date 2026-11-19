@@ -1,6 +1,7 @@
 // Navegador automático para os prints do relatório de ponta a ponta: Edge headless controlado por CDP,
 // com a sessão do Embrapa I/O de uma pessoa (login pelo código do Mailpit, via _login.mjs).
 //   const nav = await abrir('pesquisador.cerrado@embrapa.br'); await nav.inicio(); await nav.print('01-...'); nav.fechar()
+// Com email null, abre sem sessão nenhuma (um tablet ou TV que só recebe um link).
 import { writeFileSync, mkdirSync, mkdtempSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
@@ -15,7 +16,7 @@ let proximaPorta = 9360
 
 export async function abrir (email, { largura = 1366, altura = 900 } = {}) {
   mkdirSync(IMG, { recursive: true })
-  const auth = await login(email)
+  const auth = email ? await login(email) : { token: null }
   const porta = proximaPorta++
   const edge = spawn('C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
     ['--headless=new', '--disable-gpu', `--window-size=${largura},${altura}`, `--remote-debugging-port=${porta}`,
@@ -45,10 +46,12 @@ export async function abrir (email, { largura = 1366, altura = 900 } = {}) {
 
   await send('Runtime.enable')
   await send('Emulation.setDeviceMetricsOverride', { width: largura, height: altura, deviceScaleFactor: 1, mobile: false })
-  await send('Page.navigate', { url: SITE + '/' })
-  await sleep(3000)
-  const usuario = { authenticated: true, name: email, email, picture: '', token: auth.token, embrapa: true }
-  await js(`localStorage.setItem('user', ${JSON.stringify(JSON.stringify(usuario))}); true`)
+  if (email) {
+    await send('Page.navigate', { url: SITE + '/' })
+    await sleep(3000)
+    const usuario = { authenticated: true, name: email, email, picture: '', token: auth.token, embrapa: true }
+    await js(`localStorage.setItem('user', ${JSON.stringify(JSON.stringify(usuario))}); true`)
+  }
 
   return {
     email, js, send, esperar, erros, token: auth.token,
