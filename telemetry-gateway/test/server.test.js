@@ -48,7 +48,7 @@ const gateway = async t => {
 test('device token with its id in the path gets a normalized query', async t => {
   const baseUrl = await gateway(t)
   const start = NOW - 24 * 3600 * 1000
-  const result = await authorize(baseUrl, `/telemetry/DEVICE/${DEVICE_C}/values/timeseries?keys=temperature,humidity&startTs=${start}&endTs=${NOW}&agg=avg&interval=60000`, deviceToken())
+  const result = await authorize(baseUrl, `/applications/telemetry/DEVICE/${DEVICE_C}/values/timeseries?keys=temperature,humidity&startTs=${start}&endTs=${NOW}&agg=avg&interval=60000`, deviceToken())
 
   assert.equal(result.status, 204)
   assert.equal(result.headers.get('x-telemetry-path'), `DEVICE/${DEVICE_C}/values/timeseries`)
@@ -64,14 +64,14 @@ test('device token with its id in the path gets a normalized query', async t => 
 // O escopo "project" era do Grafana IoT, retirado; um token antigo desse tipo é recusado.
 test('project tokens are no longer accepted', async t => {
   const baseUrl = await gateway(t)
-  const result = await authorize(baseUrl, `/telemetry/DEVICE/${DEVICE_A}/values/timeseries?keys=temperature`, token({ scope: 'project', sub: 'teste1', devices: [DEVICE_A, DEVICE_B] }))
+  const result = await authorize(baseUrl, `/applications/telemetry/DEVICE/${DEVICE_A}/values/timeseries?keys=temperature`, token({ scope: 'project', sub: 'teste1', devices: [DEVICE_A, DEVICE_B] }))
   assert.equal(result.status, 401)
   assert.equal(result.headers.get('x-telemetry-authorization'), null)
 })
 
 test('device token uses its own subject when the path has no device', async t => {
   const baseUrl = await gateway(t)
-  const result = await authorize(baseUrl, '/telemetry/keys/timeseries', deviceToken())
+  const result = await authorize(baseUrl, '/applications/telemetry/keys/timeseries', deviceToken())
   assert.equal(result.status, 204)
   assert.equal(result.headers.get('x-telemetry-path'), `DEVICE/${DEVICE_C}/keys/timeseries`)
   assert.equal(result.headers.get('x-telemetry-query'), '')
@@ -79,21 +79,21 @@ test('device token uses its own subject when the path has no device', async t =>
 
 test('device token cannot reach another device', async t => {
   const baseUrl = await gateway(t)
-  const result = await authorize(baseUrl, `/telemetry/DEVICE/${DEVICE_A}/keys/timeseries`, deviceToken())
+  const result = await authorize(baseUrl, `/applications/telemetry/DEVICE/${DEVICE_A}/keys/timeseries`, deviceToken())
   assert.equal(result.status, 403)
   assert.equal(result.headers.get('x-telemetry-authorization'), null)
 })
 
 test('latest values pass without a period', async t => {
   const baseUrl = await gateway(t)
-  const result = await authorize(baseUrl, '/telemetry/values/timeseries?keys=level&useStrictDataTypes=true', deviceToken())
+  const result = await authorize(baseUrl, '/applications/telemetry/values/timeseries?keys=level&useStrictDataTypes=true', deviceToken())
   assert.equal(result.status, 204)
   assert.equal(result.headers.get('x-telemetry-query'), 'keys=level&useStrictDataTypes=true')
 })
 
 test('periods longer than the maximum are clipped to the most recent days', async t => {
   const baseUrl = await gateway(t)
-  const result = await authorize(baseUrl, `/telemetry/values/timeseries?keys=level&startTs=0&endTs=${NOW}&limit=9999`, deviceToken())
+  const result = await authorize(baseUrl, `/applications/telemetry/values/timeseries?keys=level&startTs=0&endTs=${NOW}&limit=9999`, deviceToken())
   assert.equal(result.status, 204)
   const query = new URLSearchParams(result.headers.get('x-telemetry-query'))
   assert.equal(Number(query.get('startTs')), NOW - 31 * 24 * 3600 * 1000)
@@ -103,28 +103,28 @@ test('periods longer than the maximum are clipped to the most recent days', asyn
 
 test('unknown or repeated parameters are refused', async t => {
   const baseUrl = await gateway(t)
-  assert.equal((await authorize(baseUrl, '/telemetry/values/timeseries?keys=level&entityType=TENANT', deviceToken())).status, 403)
-  assert.equal((await authorize(baseUrl, '/telemetry/values/timeseries?keys=a&keys=b', deviceToken())).status, 403)
-  assert.equal((await authorize(baseUrl, '/telemetry/values/timeseries?keys=a%20b', deviceToken())).status, 403)
-  assert.equal((await authorize(baseUrl, '/telemetry/values/timeseries?keys=a&startTs=1', deviceToken())).status, 403)
+  assert.equal((await authorize(baseUrl, '/applications/telemetry/values/timeseries?keys=level&entityType=TENANT', deviceToken())).status, 403)
+  assert.equal((await authorize(baseUrl, '/applications/telemetry/values/timeseries?keys=a&keys=b', deviceToken())).status, 403)
+  assert.equal((await authorize(baseUrl, '/applications/telemetry/values/timeseries?keys=a%20b', deviceToken())).status, 403)
+  assert.equal((await authorize(baseUrl, '/applications/telemetry/values/timeseries?keys=a&startTs=1', deviceToken())).status, 403)
 })
 
 test('only telemetry read paths are allowed', async t => {
   const baseUrl = await gateway(t)
-  assert.equal((await authorize(baseUrl, `/telemetry/DEVICE/${DEVICE_C}/timeseries/delete`, deviceToken())).status, 403)
-  assert.equal((await authorize(baseUrl, `/telemetry/DEVICE/${DEVICE_C}/values/attributes`, deviceToken())).status, 403)
-  assert.equal((await authorize(baseUrl, '/telemetry/../api/tenant/devices', deviceToken())).status, 403)
+  assert.equal((await authorize(baseUrl, `/applications/telemetry/DEVICE/${DEVICE_C}/timeseries/delete`, deviceToken())).status, 403)
+  assert.equal((await authorize(baseUrl, `/applications/telemetry/DEVICE/${DEVICE_C}/values/attributes`, deviceToken())).status, 403)
+  assert.equal((await authorize(baseUrl, '/applications/telemetry/../api/tenant/devices', deviceToken())).status, 403)
 })
 
 test('writes are refused', async t => {
   const baseUrl = await gateway(t)
-  const result = await authorize(baseUrl, '/telemetry/values/timeseries?keys=level', deviceToken(), 'POST')
+  const result = await authorize(baseUrl, '/applications/telemetry/values/timeseries?keys=level', deviceToken(), 'POST')
   assert.equal(result.status, 403)
 })
 
 test('invalid tokens are refused with 401', async t => {
   const baseUrl = await gateway(t)
-  const uri = '/telemetry/keys/timeseries'
+  const uri = '/applications/telemetry/keys/timeseries'
   assert.equal((await authorize(baseUrl, uri, null)).status, 401)
   assert.equal((await authorize(baseUrl, uri, deviceToken(DEVICE_C, { exp: Math.floor(NOW / 1000) - 1 }))).status, 401)
   assert.equal((await authorize(baseUrl, uri, token({ scope: 'device', sub: DEVICE_C }, { secret: 'another-secret-with-at-least-32-characters' }))).status, 401)
@@ -137,18 +137,18 @@ test('invalid tokens are refused with 401', async t => {
 test('gateway fails closed without a strong secret or service credential', async t => {
   const weak = await start({ TELEMETRY_JWT_SECRET: 'short' })
   t.after(() => weak.server.close())
-  assert.equal((await authorize(weak.baseUrl, '/telemetry/keys/timeseries', deviceToken())).status, 503)
+  assert.equal((await authorize(weak.baseUrl, '/applications/telemetry/keys/timeseries', deviceToken())).status, 503)
 
   const missing = await start({ TB_TELEMETRY_TOKEN: '' })
   t.after(() => missing.server.close())
-  assert.equal((await authorize(missing.baseUrl, '/telemetry/keys/timeseries', deviceToken())).status, 503)
+  assert.equal((await authorize(missing.baseUrl, '/applications/telemetry/keys/timeseries', deviceToken())).status, 503)
 })
 
 test('health reports configuration state', async t => {
   const baseUrl = await gateway(t)
   const result = await fetch(baseUrl + '/health')
   assert.equal(result.status, 200)
-  assert.deepEqual(await result.json(), { status: 'ok' })
+  assert.deepEqual(await result.json(), { status: 'ok', commands: 'unconfigured' })
 })
 
 // Chaves de aplicação: o backend é simulado; ele recebe o segredo compartilhado e a chave
@@ -178,21 +178,21 @@ test('app key reads only the devices the backend allows', async t => {
   const calls = []
   const baseUrl = await startWithBackend(t, calls)
 
-  const allowed = await authorizeWithKey(baseUrl, `/telemetry/DEVICE/${DEVICE_A}/values/timeseries`, APP_KEY)
+  const allowed = await authorizeWithKey(baseUrl, `/applications/telemetry/DEVICE/${DEVICE_A}/values/timeseries`, APP_KEY)
   assert.equal(allowed.status, 204)
   assert.equal(allowed.headers.get('x-telemetry-path'), `DEVICE/${DEVICE_A}/values/timeseries`)
   assert.equal(allowed.headers.get('x-telemetry-authorization'), 'ApiKey service-key')
   assert.equal(calls[0].url, 'http://backend:3000/iot/apps/internal/authorize')
   assert.equal(calls[0].headers['X-Telemetry-Gateway'], SECRET)
 
-  assert.equal((await authorizeWithKey(baseUrl, `/telemetry/DEVICE/${DEVICE_B}/values/timeseries`, APP_KEY)).status, 403)
-  assert.equal((await authorizeWithKey(baseUrl, '/telemetry/values/timeseries', APP_KEY)).status, 403)
+  assert.equal((await authorizeWithKey(baseUrl, `/applications/telemetry/DEVICE/${DEVICE_B}/values/timeseries`, APP_KEY)).status, 403)
+  assert.equal((await authorizeWithKey(baseUrl, '/applications/telemetry/values/timeseries', APP_KEY)).status, 403)
 })
 
 test('revoked, unknown or malformed app keys are refused', async t => {
   const calls = []
   const baseUrl = await startWithBackend(t, calls)
-  const uri = `/telemetry/DEVICE/${DEVICE_A}/values/timeseries`
+  const uri = `/applications/telemetry/DEVICE/${DEVICE_A}/values/timeseries`
 
   assert.equal((await authorizeWithKey(baseUrl, uri, 'ioa_' + 'z'.repeat(40))).status, 401)
   assert.equal((await authorizeWithKey(baseUrl, uri, 'not-a-key')).status, 401)
@@ -202,7 +202,7 @@ test('revoked, unknown or malformed app keys are refused', async t => {
 
 test('app key check fails closed when the backend is down', async t => {
   const baseUrl = await startWithBackend(t, [], async () => { throw new Error('ECONNREFUSED') })
-  assert.equal((await authorizeWithKey(baseUrl, `/telemetry/DEVICE/${DEVICE_A}/values/timeseries`, APP_KEY)).status, 503)
+  assert.equal((await authorizeWithKey(baseUrl, `/applications/telemetry/DEVICE/${DEVICE_A}/values/timeseries`, APP_KEY)).status, 503)
 })
 
 test('devices endpoint lists what the app key reads', async t => {
@@ -214,4 +214,113 @@ test('devices endpoint lists what the app key reads', async t => {
 
   assert.equal((await fetch(baseUrl + '/devices')).status, 401)
   assert.equal((await fetch(baseUrl + '/devices', { headers: { 'X-API-Key': 'ioa_' + 'z'.repeat(40) } })).status, 401)
+})
+
+test('the old /telemetry path is refused; reads live under /applications', async t => {
+  const baseUrl = await startWithBackend(t, [])
+  const allowed = await authorizeWithKey(baseUrl, `/applications/telemetry/DEVICE/${DEVICE_A}/values/timeseries`, APP_KEY)
+  assert.equal(allowed.status, 204)
+  assert.equal(allowed.headers.get('x-telemetry-path'), `DEVICE/${DEVICE_A}/values/timeseries`)
+  assert.equal((await authorizeWithKey(baseUrl, `/telemetry/DEVICE/${DEVICE_A}/values/timeseries`, APP_KEY)).status, 403)
+  assert.equal((await authorizeWithKey(baseUrl, `/applications/rpc/DEVICE/${DEVICE_A}/values/timeseries`, APP_KEY)).status, 403)
+})
+
+// Comandos (RPC two-way): backend e ThingsBoard simulados no mesmo fetch
+const VALVE = DEVICE_A
+const rpcStub = (calls, { tb = async () => new Response('{"open":true}', { status: 200 }), commandDevices = [VALVE] } = {}) => async (url, options = {}) => {
+  calls.push({ url, options })
+  if (url.startsWith('http://backend:3000/iot/apps/internal/authorize')) {
+    if (options.headers['X-API-Key'] !== APP_KEY) return new Response('{}', { status: 401 })
+    return new Response(JSON.stringify({
+      app: 'app-1',
+      devices: [{ id: VALVE, name: 'Valvula', label: 'Válvula' }, { id: DEVICE_B, name: 'Sensor_B', label: 'Sensor B' }],
+      ...(url.endsWith('?commands=1') ? { commandDevices } : {})
+    }), { status: 200 })
+  }
+  if (url === 'http://backend:3000/iot/apps/internal/commands') return new Response('{}', { status: 201 })
+  if (url.startsWith('http://tb:8080/api/plugins/rpc/twoway/')) return tb(url, options)
+  return new Response('{}', { status: 404 })
+}
+
+const startRpc = async (t, fetchImpl, env = {}) => {
+  let now = NOW
+  const server = createTelemetryGateway({
+    clock: () => now,
+    fetchImpl,
+    env: { TELEMETRY_JWT_SECRET: SECRET, TB_TELEMETRY_TOKEN: 'service-key', TB_RPC_TOKEN: 'rpc-key', THINGSBOARD_URL: 'http://tb:8080/', BACKEND_URL: 'http://backend:3000', ...env }
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  t.after(() => server.close())
+  return { baseUrl: 'http://127.0.0.1:' + server.address().port, advance: ms => { now += ms } }
+}
+
+const send = (baseUrl, device, body, key = APP_KEY) => fetch(`${baseUrl}/rpc/twoway/${device}`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', ...(key ? { 'X-API-Key': key } : {}) },
+  body: typeof body === 'string' ? body : JSON.stringify(body)
+})
+
+test('a command reaches ThingsBoard with the RPC credential and is recorded', async t => {
+  const calls = []
+  const { baseUrl } = await startRpc(t, rpcStub(calls))
+
+  const result = await send(baseUrl, VALVE, { method: 'setValve', params: { open: true }, timeout: 1, persistent: true })
+  assert.equal(result.status, 200)
+  assert.deepEqual(await result.json(), { open: true })
+
+  const tb = calls.find(call => call.url.startsWith('http://tb:8080/'))
+  assert.equal(tb.url, `http://tb:8080/api/plugins/rpc/twoway/${VALVE}`)
+  assert.equal(tb.options.headers['X-Authorization'], 'ApiKey rpc-key')
+  // só method e params seguem; o timeout é do gateway
+  assert.deepEqual(JSON.parse(tb.options.body), { method: 'setValve', params: { open: true }, timeout: 10000 })
+
+  const history = calls.find(call => call.url.endsWith('/internal/commands'))
+  assert.equal(history.options.headers['X-Telemetry-Gateway'], SECRET)
+  assert.deepEqual(JSON.parse(history.options.body), { app: 'app-1', device: VALVE, method: 'setValve', params: '{"open":true}', ok: true, response: '{"open":true}', error: '' })
+})
+
+test('a device that does not answer in time gives 504 and a failed entry in the history', async t => {
+  const calls = []
+  const { baseUrl } = await startRpc(t, rpcStub(calls, { tb: async () => new Response('', { status: 504 }) }))
+
+  const result = await send(baseUrl, VALVE, { method: 'setValve', params: { open: true } })
+  assert.equal(result.status, 504)
+  const history = JSON.parse(calls.find(call => call.url.endsWith('/internal/commands')).options.body)
+  assert.equal(history.ok, false)
+  assert.equal(history.error, 'O dispositivo não respondeu em 10 s')
+})
+
+test('commands only go to devices the backend allows, with a valid body and key', async t => {
+  const calls = []
+  const { baseUrl } = await startRpc(t, rpcStub(calls))
+
+  // DEVICE_B é lido pela chave, mas não comandado
+  assert.equal((await send(baseUrl, DEVICE_B, { method: 'setPower', params: { on: true } })).status, 403)
+  assert.equal((await send(baseUrl, VALVE, { method: 'setValve' }, 'ioa_' + 'z'.repeat(40))).status, 401)
+  assert.equal((await send(baseUrl, VALVE, { method: 'setValve' }, null)).status, 401)
+  assert.equal((await send(baseUrl, VALVE, 'não é json')).status, 400)
+  assert.equal((await send(baseUrl, VALVE, { method: '1abc' })).status, 400)
+  assert.equal((await send(baseUrl, VALVE, { params: {} })).status, 400)
+  assert.equal((await send(baseUrl, VALVE, { method: 'setValve', params: { blob: 'x'.repeat(5000) } })).status, 400)
+  assert.equal((await send(baseUrl, VALVE, { method: 'setValve', params: { blob: 'x'.repeat(9000) } })).status, 413)
+  assert.equal((await fetch(`${baseUrl}/rpc/twoway/${VALVE}`, { headers: { 'X-API-Key': APP_KEY } })).status, 405)
+  // nada disso chegou ao ThingsBoard
+  assert.equal(calls.filter(call => call.url.startsWith('http://tb:8080/')).length, 0)
+})
+
+test('commands are limited per application and minute', async t => {
+  const { baseUrl, advance } = await startRpc(t, rpcStub([]), { RPC_MAX_PER_MINUTE: '2' })
+  assert.equal((await send(baseUrl, VALVE, { method: 'getState' })).status, 200)
+  assert.equal((await send(baseUrl, VALVE, { method: 'getState' })).status, 200)
+  assert.equal((await send(baseUrl, VALVE, { method: 'getState' })).status, 429)
+  advance(60001)
+  assert.equal((await send(baseUrl, VALVE, { method: 'getState' })).status, 200)
+})
+
+test('commands fail closed without the RPC credential or when the backend cannot check', async t => {
+  const missing = await startRpc(t, rpcStub([]), { TB_RPC_TOKEN: '' })
+  assert.equal((await send(missing.baseUrl, VALVE, { method: 'getState' })).status, 503)
+
+  const down = await startRpc(t, async url => url.includes('/authorize') ? new Response('{}', { status: 503 }) : new Response('{}', { status: 201 }))
+  assert.equal((await send(down.baseUrl, VALVE, { method: 'getState' })).status, 503)
 })

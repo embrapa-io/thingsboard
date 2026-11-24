@@ -47,6 +47,14 @@ export const TELEMETRIA = {
   grupo: 'Serviço · Telemetria',
   conta: 'servico.telemetria@embrapa.local'
 }
+// Conta de serviço dos comandos (RPC) da chave de aplicação: só manda RPC a dispositivos.
+// Quem pode comandar o quê é decidido pelo backend do Embrapa I/O (Responsável da localidade);
+// esta conta só executa. A chave dela fica em TB_RPC_TOKEN (thingsboard/.env).
+export const COMANDOS = {
+  papel: { name: 'Serviço · Comandos', type: 'GENERIC', permissions: { DEVICE: ['READ', 'RPC_CALL'] } },
+  grupo: 'Serviço · Comandos',
+  conta: 'servico.comandos@embrapa.local'
+}
 export const GRUPOS = lab => ({
   dispositivos: `${lab} · Dispositivos`,
   paineis: `${lab} · Painéis`,

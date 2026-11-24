@@ -76,39 +76,60 @@ de login. A customização está em
 `nginx/static/embrapa-access-denied.js` e só atua no diálogo padrão de acesso
 proibido; os demais diálogos não são modificados.
 
-## Camada de telemetria
+## Camada das aplicações
 
-A telemetria é lida por `/telemetry/`, sempre via API do ThingsBoard. O
-`telemetry-gateway` valida a credencial e o NGINX repassa ao ThingsBoard somente
-a consulta normalizada por ele, com a credencial de serviço `TB_TELEMETRY_TOKEN`,
-que nunca sai da stack.
+A chave de aplicação usa um endereço base só, `/applications/`: `/applications/telemetry/`
+lê e `/applications/rpc/` comanda, sempre via API do ThingsBoard. O antigo `/telemetry/`
+foi retirado em 2026-11-24, antes de entrar em produção.
 
 A credencial é a **chave de aplicação** (`X-API-Key: ioa_...`): criada na aba Aplicações do
   diálogo de dispositivos IoT. Não expira; pode ser trocada ou revogada, com efeito
-  imediato. O gateway confere a chave no backend a cada consulta
+  imediato. O gateway confere a chave no backend a cada chamada
   (`/iot/apps/internal/authorize`, com `TELEMETRY_JWT_SECRET` no cabeçalho
   `X-Telemetry-Gateway`) e só libera os dispositivos escolhidos que seguem
-  vinculados ao projeto. `GET /telemetry/devices` lista esses dispositivos.
+  vinculados ao projeto. `GET /applications/telemetry/devices` lista esses dispositivos.
+
+### Leitura
+
+O `telemetry-gateway` valida a credencial e o NGINX repassa ao ThingsBoard somente
+a consulta normalizada por ele, com a credencial de serviço `TB_TELEMETRY_TOKEN`,
+que nunca sai da stack. Somente leitura de telemetria é aceita (`values/timeseries` e
+`keys/timeseries`, apenas GET). Períodos maiores que `TELEMETRY_MAX_RANGE_DAYS`
+são recortados para os dias mais recentes e cada consulta devolve no máximo
+`TELEMETRY_MAX_POINTS` pontos.
 
 O gateway também aceita o JWT de dispositivo (`scope: device`, assinado com
 `TELEMETRY_JWT_SECRET`). O JWT de projeto, que era do Grafana IoT, foi retirado
 junto com ele e é recusado. Os painéis agora ficam no próprio ThingsBoard.
 
-Somente leitura de telemetria é aceita (`values/timeseries` e
-`keys/timeseries`, apenas GET). Períodos maiores que `TELEMETRY_MAX_RANGE_DAYS`
-são recortados para os dias mais recentes e cada consulta devolve no máximo
-`TELEMETRY_MAX_POINTS` pontos. Exemplo:
+### Comandos
+
+`POST /applications/rpc/twoway/<id>` com `{"method": "...", "params": ...}` manda um RPC
+two-way e devolve a resposta do dispositivo. A mesma chave lê e comanda, sem opção na
+tela: o backend libera só os dispositivos da aplicação que quem a criou pode alterar no
+ThingsBoard (Responsável da localidade), enquanto essa pessoa for do projeto, e confere
+isso a cada comando. O pedido inteiro passa pelo gateway (o `auth_request` não vê o corpo
+nem a resposta): ele valida o corpo, limita a `RPC_MAX_PER_MINUTE` comandos por aplicação,
+chama o ThingsBoard com `TB_RPC_TOKEN` e grava cada comando no histórico do backend
+(`/iot/apps/internal/commands`). Sem resposta em `RPC_TIMEOUT_MS` (10 s), devolve 504.
+
+Exemplo:
 
 ```sh
-curl -H "X-API-Key: $IO_APP_KEY" "http://localhost:9090/telemetry/devices"
-curl -H "X-API-Key: $IO_APP_KEY" "http://localhost:9090/telemetry/DEVICE/$SENSOR/values/timeseries?keys=temperature&startTs=1788235200000&endTs=1790827200000&agg=AVG&interval=86400000"
+curl -H "X-API-Key: $IO_APP_KEY" "http://localhost:9090/applications/telemetry/devices"
+curl -H "X-API-Key: $IO_APP_KEY" "http://localhost:9090/applications/telemetry/DEVICE/$SENSOR/values/timeseries?keys=temperature&startTs=1788235200000&endTs=1790827200000&agg=AVG&interval=86400000"
+curl -X POST -H "X-API-Key: $IO_APP_KEY" -H "Content-Type: application/json" \
+  -d '{"method": "setValve", "params": {"open": true}}' \
+  "http://localhost:9090/applications/rpc/twoway/$ATUADOR"
 ```
 
 `TB_TELEMETRY_TOKEN` é a API key da conta de serviço `servico.telemetria@embrapa.local`,
 um usuário do tenant cujo único papel (`Serviço · Telemetria`) lê dispositivos e
 telemetria em todas as unidades: não lê credenciais MQTT, não grava telemetria, não
-manda RPC e não vê usuários nem rule chains. `rbac/servico-telemetria.mjs` cria a
-conta e grava a chave no `.env`; `rbac/conferir-telemetria.mjs` confere as permissões.
+manda RPC e não vê usuários nem rule chains. `TB_RPC_TOKEN` é a da conta
+`servico.comandos@embrapa.local` (`Serviço · Comandos`), que só manda RPC.
+`rbac/servico-telemetria.mjs` cria as contas e grava as chaves no `.env` (`--comandos`
+para a segunda); `rbac/conferir-telemetria.mjs` confere as permissões da de leitura.
 
 Testes da camada:
 
@@ -139,9 +160,9 @@ A entrada web também muda em desenvolvimento. As pessoas entram direto no
 ThingsBoard, com login e RBAC nativos, em `http://127.0.0.1:9095`. O `nginx` e o
 `auth-gateway` ficam no profile `nginx-completo` e não sobem por padrão. No lugar
 deles sobe o `telemetry-proxy` (`nginx/telemetry-proxy.conf`), que atende só as
-rotas `/telemetry` em `127.0.0.1:${PORT_WEB}` e responde pelo nome `tb-web` na
-rede `io_thingsboard`. Sem ele, param a chave da aba Aplicações
-(`TELEMETRY_PUBLIC_URL`) e as consultas do backend em `http://tb-web/telemetry`. As rotas são as mesmas de
+rotas `/applications` em `127.0.0.1:${PORT_WEB}` e responde pelo nome `tb-web` na
+rede `io_thingsboard`. Sem ele, para a chave da aba Aplicações
+(`APPLICATIONS_PUBLIC_URL`): leitura e comandos. As rotas são as mesmas de
 `conf.d/thingsboard.conf`: ao mudar uma, mude a outra. A única diferença é o
 limite de requisições, contado por `Authorization` e `X-API-Key` juntos (no
 `nginx.conf` de produção, só por `Authorization`).

@@ -161,6 +161,12 @@ services:
       BACKEND_URL: "${TELEMETRY_BACKEND_URL:-http://app:3000}"
       TELEMETRY_MAX_RANGE_DAYS: "${TELEMETRY_MAX_RANGE_DAYS:-31}"
       TELEMETRY_MAX_POINTS: "${TELEMETRY_MAX_POINTS:-500}"
+      # Comandos (RPC) pela chave de aplicação: credencial própria, criada por
+      # rbac/servico-telemetria.mjs --comandos. Vazia, /applications/rpc responde 503.
+      TB_RPC_TOKEN: "${TB_RPC_TOKEN:-}"
+      THINGSBOARD_URL: "${TELEMETRY_THINGSBOARD_URL:-http://thingsboard:8080}"
+      RPC_TIMEOUT_MS: "${RPC_TIMEOUT_MS:-10000}"
+      RPC_MAX_PER_MINUTE: "${RPC_MAX_PER_MINUTE:-30}"
     expose:
       - "3000"
     networks:

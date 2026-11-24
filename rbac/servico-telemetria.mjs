@@ -2,19 +2,25 @@
 // pela chave de API dela. A conta é um usuário do tenant com um único papel: ler dispositivos
 // e telemetria (Serviço · Telemetria). Nunca imprime chaves.
 //
-// Sem argumentos só SIMULA. Com --aplicar, grava. Pode rodar de novo: se a chave do .env já é
+// Com --comandos, faz o mesmo para a conta dos comandos (RPC) da chave de aplicação
+// (Serviço · Comandos, só RPC_CALL) e grava TB_RPC_TOKEN.
+//
+// Sem --aplicar só SIMULA. Com --aplicar, grava. Pode rodar de novo: se a chave do .env já é
 // desta conta, não muda nada.
 //
-//   node servico-telemetria.mjs [--aplicar]
+//   node servico-telemetria.mjs [--comandos] [--aplicar]
 //
 // Depois de aplicar, recrie o contêiner: docker compose up -d telemetry-gateway
 import crypto from 'node:crypto'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { T, call, must, page, list, TELEMETRIA } from './lib.mjs'
+import { T, call, must, page, list, TELEMETRIA, COMANDOS } from './lib.mjs'
 
 const APLICAR = process.argv.includes('--aplicar')
+const SERVICO = process.argv.includes('--comandos')
+  ? { ...COMANDOS, variavel: 'TB_RPC_TOKEN', sobrenome: 'Comandos', uso: 'Usada pelo telemetry-gateway para mandar os comandos (RPC) das chaves de aplicação. Não é de uma pessoa.', chave: 'telemetry-gateway (comandos)' }
+  : { ...TELEMETRIA, variavel: 'TB_TELEMETRY_TOKEN', sobrenome: 'Telemetria', uso: 'Usada pelo telemetry-gateway para ler telemetria. Não é de uma pessoa.', chave: 'telemetry-gateway' }
 const passo = (txt) => console.log(`${APLICAR ? '→' : '[simulação]'} ${txt}`)
 const porNome = (itens, nome, campo = 'name') => itens.find(x => x[campo] === nome)
 const ENV_TB = join(dirname(fileURLToPath(import.meta.url)), '..', '.env')
@@ -23,7 +29,7 @@ const quem = must(await T('GET', '/api/auth/user'), 'auth')
 if (quem.authority !== 'TENANT_ADMIN') throw new Error('a chave precisa ser de administrador do tenant')
 
 // --- papel
-const def = TELEMETRIA.papel
+const def = SERVICO.papel
 let papel = porNome(list(await T('GET', `/api/roles${page}`)), def.name)
 if (!papel || JSON.stringify(papel.permissions) !== JSON.stringify(def.permissions)) {
   passo(`${papel ? 'atualizar' : 'criar'} papel "${def.name}"`)
@@ -31,10 +37,10 @@ if (!papel || JSON.stringify(papel.permissions) !== JSON.stringify(def.permissio
 }
 
 // --- grupo do tenant com o papel
-let grupo = porNome(list(await T('GET', `/api/entityGroups/USER${page}`)), TELEMETRIA.grupo)
+let grupo = porNome(list(await T('GET', `/api/entityGroups/USER${page}`)), SERVICO.grupo)
 if (!grupo) {
-  passo(`criar grupo de usuários do tenant "${TELEMETRIA.grupo}"`)
-  if (APLICAR) grupo = must(await T('POST', '/api/entityGroup', { name: TELEMETRIA.grupo, type: 'USER' }), 'grupo')
+  passo(`criar grupo de usuários do tenant "${SERVICO.grupo}"`)
+  if (APLICAR) grupo = must(await T('POST', '/api/entityGroup', { name: SERVICO.grupo, type: 'USER' }), 'grupo')
 }
 if (grupo && papel) {
   const perms = list(await T('GET', `/api/userGroup/${grupo.id.id}/groupPermissions`))
@@ -45,13 +51,13 @@ if (grupo && papel) {
 }
 
 // --- conta
-let conta = list(await T('GET', `/api/user/users${page}&textSearch=${encodeURIComponent(TELEMETRIA.conta)}`)).find(u => u.email === TELEMETRIA.conta)
+let conta = list(await T('GET', `/api/user/users${page}&textSearch=${encodeURIComponent(SERVICO.conta)}`)).find(u => u.email === SERVICO.conta)
 if (!conta) {
-  passo(`criar a conta de serviço ${TELEMETRIA.conta}`)
+  passo(`criar a conta de serviço ${SERVICO.conta}`)
   if (APLICAR) {
     conta = must(await T('POST', `/api/user?sendActivationMail=false&entityGroupId=${grupo.id.id}`,
-      { email: TELEMETRIA.conta, authority: 'TENANT_ADMIN', firstName: 'Serviço', lastName: 'Telemetria',
-        additionalInfo: { description: 'Usada pelo telemetry-gateway para ler telemetria. Não é de uma pessoa.' } }), 'conta de serviço')
+      { email: SERVICO.conta, authority: 'TENANT_ADMIN', firstName: 'Serviço', lastName: SERVICO.sobrenome,
+        additionalInfo: { description: SERVICO.uso } }), 'conta de serviço')
     // ativa com uma senha aleatória que ninguém conhece; o acesso é só pela chave de API
     const link = await T('GET', `/api/user/${conta.id.id}/activationLink`)
     must(await call('POST', '/api/noauth/activate?sendActivationMail=false', null,
@@ -61,22 +67,22 @@ if (!conta) {
 
 // --- chave no .env do ThingsBoard
 const env = readFileSync(ENV_TB, 'utf8')
-const linha = env.match(/^TB_TELEMETRY_TOKEN=(.*)$/m)
+const linha = env.match(new RegExp('^' + SERVICO.variavel + '=(.*)$', 'm'))
 const atual = linha ? linha[1].trim().replace(/^"|"$/g, '') : ''
 const dono = atual ? (await call('GET', '/api/auth/user', 'ApiKey ' + atual)).json : null
-if (dono && dono.email === TELEMETRIA.conta) {
-  console.log('TB_TELEMETRY_TOKEN já é a chave da conta de serviço.')
+if (dono && dono.email === SERVICO.conta) {
+  console.log(`${SERVICO.variavel} já é a chave da conta de serviço.`)
 } else {
-  passo(`gerar a chave de API da conta (revogando as anteriores) e gravar em TB_TELEMETRY_TOKEN; hoje ela é de ${dono ? dono.authority : 'ninguém'}`)
+  passo(`gerar a chave de API da conta (revogando as anteriores) e gravar em ${SERVICO.variavel}; hoje ela é de ${dono ? dono.authority : 'ninguém'}`)
   if (APLICAR) {
     for (const k of list(await T('GET', `/api/apiKeys/${conta.id.id}${page}`))) await T('DELETE', `/api/apiKey/${k.id.id}`)
-    const r = must(await T('POST', '/api/apiKey', { userId: conta.id, description: 'telemetry-gateway', enabled: true }), 'chave de API')
+    const r = must(await T('POST', '/api/apiKey', { userId: conta.id, description: SERVICO.chave, enabled: true }), 'chave de API')
     const valor = String(typeof r === 'string' ? r : (r.value || r.token || r.apiKey || '')).replace(/^ApiKey /, '')
     if (!valor) throw new Error('a resposta de /api/apiKey não trouxe o valor da chave')
     const teste = (await call('GET', '/api/auth/user', 'ApiKey ' + valor)).json
-    if (!teste || teste.email !== TELEMETRIA.conta) throw new Error('a chave nova não autenticou como a conta de serviço')
-    writeFileSync(ENV_TB, linha ? env.replace(/^TB_TELEMETRY_TOKEN=.*$/m, 'TB_TELEMETRY_TOKEN=' + valor) : env.replace(/\n?$/, '\nTB_TELEMETRY_TOKEN=' + valor + '\n'))
-    console.log('TB_TELEMETRY_TOKEN atualizado. Recrie o contêiner: docker compose up -d telemetry-gateway')
+    if (!teste || teste.email !== SERVICO.conta) throw new Error('a chave nova não autenticou como a conta de serviço')
+    writeFileSync(ENV_TB, linha ? env.replace(new RegExp('^' + SERVICO.variavel + '=.*$', 'm'), SERVICO.variavel + '=' + valor) : env.replace(/\n?$/, '\n' + SERVICO.variavel + '=' + valor + '\n'))
+    console.log(`${SERVICO.variavel} atualizado. Recrie o contêiner: docker compose up -d telemetry-gateway`)
   }
 }
 
