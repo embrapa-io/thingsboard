@@ -1,6 +1,5 @@
 'use strict'
 
-const crypto = require('node:crypto')
 const http = require('node:http')
 
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -17,7 +16,6 @@ const DEFAULT_RPC_PER_MINUTE = 30
 const UUID = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
 const uuidPattern = new RegExp('^' + UUID + '$')
 const devicePathPattern = new RegExp('^/telemetry/DEVICE/(' + UUID + ')/(values|keys)/timeseries$')
-const ownPathPattern = /^\/telemetry\/(values|keys)\/timeseries$/
 const rpcPathPattern = new RegExp('^/rpc/twoway/(' + UUID + ')$')
 const keyPattern = /^[A-Za-z0-9_.:-]{1,128}$/
 const methodPattern = /^[A-Za-z][A-Za-z0-9_.:-]{0,63}$/
@@ -37,21 +35,6 @@ class Denied extends Error {
 }
 
 const deny = (status, reason) => { throw new Denied(status, reason) }
-
-const base64urlJson = value => {
-  try {
-    return JSON.parse(Buffer.from(value, 'base64url').toString('utf8'))
-  } catch {
-    return null
-  }
-}
-
-const sign = (input, secret) => crypto.createHmac('sha256', secret).update(input).digest()
-
-const getBearerToken = request => {
-  const match = String(request.headers.authorization || '').match(/^Bearer\s+(\S+)$/i)
-  return match ? match[1] : ''
-}
 
 const getApiKey = request => String(request.headers['x-api-key'] || '').trim()
 
@@ -122,47 +105,8 @@ const parseCommand = raw => {
   return { method: body.method, params, paramsText }
 }
 
-const verifyToken = (token, { secret, issuer, audience, now }) => {
-  const parts = token.split('.')
-  if (parts.length !== 3) deny(401, 'malformed token')
-
-  const header = base64urlJson(parts[0])
-  if (!header || header.alg !== 'HS256') deny(401, 'unsupported algorithm')
-
-  const expected = sign(parts[0] + '.' + parts[1], secret)
-  let supplied
-  try {
-    supplied = Buffer.from(parts[2], 'base64url')
-  } catch {
-    deny(401, 'invalid signature')
-  }
-  if (supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) deny(401, 'invalid signature')
-
-  const claims = base64urlJson(parts[1])
-  if (!claims || typeof claims !== 'object') deny(401, 'invalid claims')
-  if (claims.iss !== issuer) deny(401, 'invalid issuer')
-  const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud]
-  if (!audiences.includes(audience)) deny(401, 'invalid audience')
-
-  const seconds = Math.floor(now / 1000)
-  if (!Number.isInteger(claims.exp) || claims.exp <= seconds) deny(401, 'expired token')
-  if (claims.nbf !== undefined && (!Number.isInteger(claims.nbf) || claims.nbf > seconds)) deny(401, 'token not active')
-
-  if (claims.scope === 'device') {
-    if (typeof claims.sub !== 'string' || !uuidPattern.test(claims.sub)) deny(401, 'invalid device subject')
-    return { scope: 'device', subject: claims.sub, devices: new Set([claims.sub.toLowerCase()]) }
-  }
-
-  return deny(401, 'invalid scope')
-}
-
+// A chave sempre diz o dispositivo no caminho: /telemetry/DEVICE/<id>/(values|keys)/timeseries
 const resolveTarget = (pathname, grant) => {
-  const own = pathname.match(ownPathPattern)
-  if (own) {
-    if (grant.scope !== 'device') deny(403, 'device id required for app keys')
-    return { deviceId: grant.subject.toLowerCase(), resource: own[1] }
-  }
-
   const explicit = pathname.match(devicePathPattern)
   if (!explicit) deny(403, 'path not allowed')
 
@@ -260,8 +204,6 @@ const createTelemetryGateway = ({ env = process.env, clock = Date.now, log = () 
   const secret = String(env.TELEMETRY_JWT_SECRET || '')
   const serviceToken = String(env.TB_TELEMETRY_TOKEN || '').trim()
   const backendUrl = String(env.BACKEND_URL || 'http://app:3000').replace(/\/$/, '')
-  const issuer = String(env.TELEMETRY_JWT_ISSUER || 'embrapa-io')
-  const audience = String(env.TELEMETRY_JWT_AUDIENCE || 'telemetry')
   const maxRangeDays = Number(env.TELEMETRY_MAX_RANGE_DAYS) > 0 ? Number(env.TELEMETRY_MAX_RANGE_DAYS) : DEFAULT_MAX_RANGE_DAYS
   const maxPoints = Number.isInteger(Number(env.TELEMETRY_MAX_POINTS)) && Number(env.TELEMETRY_MAX_POINTS) > 0 ? Number(env.TELEMETRY_MAX_POINTS) : DEFAULT_MAX_POINTS
   const ready = secret.length >= MIN_SECRET_LENGTH && serviceToken.length > 0
@@ -336,14 +278,11 @@ const createTelemetryGateway = ({ env = process.env, clock = Date.now, log = () 
     503: 'Unavailable'
   }
 
-  // JWT de projeto ou de dispositivo no Authorization, ou chave de aplicação no X-API-Key
-  const grantFor = async (request, now) => {
+  // Só a chave de aplicação (X-API-Key) é aceita; os JWTs de projeto e de dispositivo saíram
+  const grantFor = async request => {
     const key = getApiKey(request)
-    if (key) return verifyApiKey(key, { backendUrl, secret, fetchImpl })
-
-    const token = getBearerToken(request)
-    if (!token) deny(401, 'missing token')
-    return verifyToken(token, { secret, issuer, audience, now })
+    if (!key) deny(401, 'missing key')
+    return verifyApiKey(key, { backendUrl, secret, fetchImpl })
   }
 
   const authorize = async request => {
@@ -354,7 +293,7 @@ const createTelemetryGateway = ({ env = process.env, clock = Date.now, log = () 
     if (method !== 'GET' && method !== 'HEAD') deny(403, 'method not allowed')
 
     const now = clock()
-    const grant = await grantFor(request, now)
+    const grant = await grantFor(request)
 
     const original = new URL(String(request.headers['x-original-uri'] || '/'), 'http://telemetry')
     // A leitura fica sob /applications/telemetry/... (o antigo /telemetry/... saiu)
@@ -477,6 +416,5 @@ if (require.main === module) {
 
 module.exports = {
   createTelemetryGateway,
-  normalizeQuery,
-  verifyToken
+  normalizeQuery
 }

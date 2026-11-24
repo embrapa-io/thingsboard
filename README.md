@@ -98,9 +98,9 @@ que nunca sai da stack. Somente leitura de telemetria é aceita (`values/timeser
 são recortados para os dias mais recentes e cada consulta devolve no máximo
 `TELEMETRY_MAX_POINTS` pontos.
 
-O gateway também aceita o JWT de dispositivo (`scope: device`, assinado com
-`TELEMETRY_JWT_SECRET`). O JWT de projeto, que era do Grafana IoT, foi retirado
-junto com ele e é recusado. Os painéis agora ficam no próprio ThingsBoard.
+Só a chave de aplicação é aceita. Os JWTs foram retirados: o de projeto, com o Grafana IoT,
+e o de dispositivo, da antiga aba Consumo, em 2026-11-24. `TELEMETRY_JWT_SECRET` continua
+como segredo compartilhado entre o gateway e o backend; o nome ficou o mesmo.
 
 ### Comandos
 
