@@ -1,5 +1,5 @@
 // Passo 4 do teste de ponta a ponta (planejamento-teste-ponta-a-ponta.md): situações do dia a dia no projeto
-// "pecuaria-multibiomas", pela interface do Embrapa I/O, com prints em relatorio-ponta-a-ponta/img/4*.png.
+// "pecuaria-corte", pela interface do Embrapa I/O, com prints em relatorio-ponta-a-ponta/img/4*.png.
 //   A. o pesquisador do Pampa desvincula um sensor dele e vincula de novo;
 //   B. o pesquisador do Pampa não consegue desvincular um sensor do Cerrado (menu e API);
 //   C. o pesquisador do Cerrado, Architect do projeto, pode desvincular sensores das outras Unidades;
@@ -17,14 +17,14 @@ import { abrir, sleep } from './_navegador.mjs'
 import { login } from './_login.mjs'
 import { T, call, must, list, page } from '../rbac/lib.mjs'
 
-const UNIX = 'pecuaria-multibiomas'
+const UNIX = 'pecuaria-corte'
 const API = 'http://localhost:8090'
 const CERRADO = 'pesquisador.cerrado@embrapa.br', PAMPA = 'pesquisador.pampa@embrapa.br', PANTANAL = 'pesquisador.pantanal@embrapa.br'
 const INTEGRANTE = 'integrante.pantanal@embrapa.br'
 const NHUMIRIM = 'Campo experimental Fazenda Nhumirim – Embrapa Pantanal'
 const CINCO_CRUZES = 'Campo experimental Fazenda Cinco Cruzes – Bagé/RS'
 const HOME = `typeof vm.projectIot === 'function' && typeof vm.projectTeam === 'function'`
-const IOT = `typeof vm.handleAssetChange === 'function' && typeof vm.linkDevice === 'function'`
+const IOT = `typeof vm.handleAssetChange === 'function' && typeof vm.linkSelected === 'function'`
 
 const resultados = []
 const verifica = (id, texto, ok, detalhe) => {
@@ -87,7 +87,8 @@ const clicarTexto = (nav, seletor, texto) => nav.js(`(() => { const el = [...doc
     await sleep(2000)
     verifica('A3', 'o sensor volta para Disponíveis', await nav.vm(IOT, `return vm.available.some(d => d.name === 'Colar_GPS_Pampa_07')`))
     await nav.print('42-pampa-sensor-de-volta-em-disponiveis')
-    await nav.vm(IOT, `const d = vm.available.find(d => d.name === 'Colar_GPS_Pampa_07'); await vm.linkDevice(d); return true`)
+    // a tela vincula pelas caixas de seleção e pelo botão "Vincular" (linkSelected)
+    await nav.vm(IOT, `vm.selectedForLink = vm.available.filter(d => d.name === 'Colar_GPS_Pampa_07').map(d => d.deviceId); await vm.linkSelected(); return true`)
     await sleep(1500)
     verifica('A4', 'vinculado de novo', (await vinculados(PAMPA)).some(d => d.name === 'Colar_GPS_Pampa_07'))
   } finally { nav.fechar() }

@@ -9,14 +9,14 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { abrir, sleep } from './_navegador.mjs'
 
-const PROJETO = { name: 'Pecuária de corte integrada multibiomas', unix: 'pecuaria-multibiomas' }
+const PROJETO = { name: 'Pecuária de Corte Integrada', unix: 'pecuaria-corte' }
 const PESQUISADORES = [
   { bioma: 'cerrado', email: 'pesquisador.cerrado@embrapa.br', local: 'Campo experimental da Embrapa Gado de Corte – Campo Grande/MS', sensores: ['Estacao_Meteorologica_Cerrado_01', 'Sensor_Rumen_Cerrado_11'] },
   { bioma: 'pampa', email: 'pesquisador.pampa@embrapa.br', local: 'Campo experimental Fazenda Cinco Cruzes – Bagé/RS', sensores: ['Balanca_Passagem_Pampa_03', 'Colar_GPS_Pampa_07', 'Sensor_Solo_Pastagem_Pampa_04'] },
   { bioma: 'pantanal', email: 'pesquisador.pantanal@embrapa.br', local: 'Campo experimental Fazenda Nhumirim – Embrapa Pantanal', sensores: ['Medidor_Nivel_Reservatorio_Pantanal_02', 'Valvula_Agua_Remota_Pantanal_01'] }
 ]
 const HOME = `typeof vm.projectIot === 'function' && typeof vm.projectTeam === 'function'`
-const IOT = `typeof vm.handleAssetChange === 'function' && typeof vm.linkDevice === 'function'`
+const IOT = `typeof vm.handleAssetChange === 'function' && typeof vm.linkSelected === 'function'`
 
 const resultados = []
 const verifica = (id, texto, ok, detalhe) => {
@@ -131,9 +131,13 @@ for (const [i, p] of PESQUISADORES.entries()) {
     if (disponiveis.length) await nav.print(`${n2}-${p.bioma}-disponiveis`)
     const jaVinculados = await nav.vm(IOT, `return vm.linked.map(d => d.name)`)
     verifica(`V${i}c`, `Disponíveis + Vinculados do ${p.bioma} = sensores da Tabela 3.1 da Unidade`, igual(new Set([...disponiveis, ...jaVinculados.filter(x => p.sensores.includes(x))]), p.sensores), disponiveis.join(', '))
-    for (const nome of disponiveis.filter(x => p.sensores.includes(x))) {
-      await nav.vm(IOT, `const d = vm.available.find(d => d.name === ${JSON.stringify(nome)}); if (d) await vm.linkDevice(d); return true`)
+    // a tela vincula pelas caixas de seleção e pelo botão "Vincular" (linkSelected), um ou vários de uma vez
+    const marcar = disponiveis.filter(x => p.sensores.includes(x))
+    if (marcar.length) {
+      await nav.vm(IOT, `vm.selectedForLink = vm.available.filter(d => ${JSON.stringify(marcar)}.includes(d.name)).map(d => d.deviceId); return vm.selectedForLink.length`)
       await sleep(800)
+      await nav.vm(IOT, `await vm.linkSelected(); return true`)
+      await sleep(1500)
     }
     await nav.vm(IOT, `vm.tab = 1; return true`)
     await sleep(3500)

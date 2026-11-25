@@ -1,5 +1,5 @@
 // Comandos pela chave de aplicação (24/11): a mesma chave lê e comanda, sem opção na tela.
-// Ponta a ponta no projeto do relatório (pecuaria-multibiomas), pela camada pública
+// Ponta a ponta no projeto do relatório (pecuaria-corte), pela camada pública
 // (telemetry-proxy :9090 → telemetry-gateway → backend e ThingsBoard → simulador).
 //
 //   A. o pesquisador do Cerrado (Maintainer, mas não Responsável no Pantanal) cria uma aplicação
@@ -15,7 +15,7 @@ import { login } from './_login.mjs'
 
 const API = 'http://localhost:8090'
 const APPS = 'http://localhost:9090/applications'
-const UNIX = 'pecuaria-multibiomas'
+const UNIX = 'pecuaria-corte'
 const CERRADO = 'pesquisador.cerrado@embrapa.br'
 const PANTANAL = 'pesquisador.pantanal@embrapa.br'
 

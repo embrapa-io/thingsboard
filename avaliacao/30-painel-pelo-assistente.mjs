@@ -16,7 +16,7 @@ import { abrir, sleep } from './_navegador.mjs'
 import { login } from './_login.mjs'
 import { T, list, page } from '../rbac/lib.mjs'
 
-const UNIX = 'pecuaria-multibiomas'
+const UNIX = 'pecuaria-corte'
 const API = 'http://localhost:8090'
 const CERRADO = 'pesquisador.cerrado@embrapa.br', PAMPA = 'pesquisador.pampa@embrapa.br', PANTANAL = 'pesquisador.pantanal@embrapa.br'
 const INTEGRANTE = 'integrante.pantanal@embrapa.br'
